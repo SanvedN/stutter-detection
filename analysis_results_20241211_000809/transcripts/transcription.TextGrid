@@ -1,0 +1,286 @@
+File type = "ooTextFile"
+Object class = "TextGrid"
+
+xmin = 0
+xmax = 23.42
+tiers? <exists>
+size = 3
+item []:
+    item [1]:
+        class = "IntervalTier"
+        name = "words"
+        xmin = 0
+        xmax = 23.42
+        intervals: size = 61
+        intervals [1]:
+            xmin = 0.0
+            xmax = 0.92
+            text = "and"
+        intervals [2]:
+            xmin = 0.92
+            xmax = 1.46
+            text = "always"
+        intervals [3]:
+            xmin = 1.46
+            xmax = 1.7
+            text = "find"
+        intervals [4]:
+            xmin = 1.7
+            xmax = 1.86
+            text = "a"
+        intervals [5]:
+            xmin = 1.86
+            xmax = 2.0
+            text = "place"
+        intervals [6]:
+            xmin = 2.0
+            xmax = 2.24
+            text = "on"
+        intervals [7]:
+            xmin = 2.24
+            xmax = 2.34
+            text = "the"
+        intervals [8]:
+            xmin = 2.34
+            xmax = 2.54
+            text = "street"
+        intervals [9]:
+            xmin = 2.54
+            xmax = 2.74
+            text = "to"
+        intervals [10]:
+            xmin = 2.74
+            xmax = 3.0
+            text = "park,"
+        intervals [11]:
+            xmin = 3.72
+            xmax = 3.8
+            text = "and"
+        intervals [12]:
+            xmin = 3.8
+            xmax = 4.04
+            text = "it"
+        intervals [13]:
+            xmin = 4.04
+            xmax = 4.62
+            text = "was"
+        intervals [14]:
+            xmin = 4.62
+            xmax = 5.06
+            text = "easy,"
+        intervals [15]:
+            xmin = 5.3
+            xmax = 5.46
+            text = "and"
+        intervals [16]:
+            xmin = 5.46
+            xmax = 5.56
+            text = "you"
+        intervals [17]:
+            xmin = 5.56
+            xmax = 6.56
+            text = "weren't"
+        intervals [18]:
+            xmin = 6.56
+            xmax = 6.8
+            text = "a"
+        intervals [19]:
+            xmin = 6.8
+            xmax = 7.0
+            text = "long"
+        intervals [20]:
+            xmin = 7.0
+            xmax = 7.42
+            text = "distance"
+        intervals [21]:
+            xmin = 7.42
+            xmax = 7.9
+            text = "away"
+        intervals [22]:
+            xmin = 7.9
+            xmax = 8.62
+            text = "from"
+        intervals [23]:
+            xmin = 8.62
+            xmax = 8.82
+            text = "wherever"
+        intervals [24]:
+            xmin = 8.82
+            xmax = 9.02
+            text = "it"
+        intervals [25]:
+            xmin = 9.02
+            xmax = 9.22
+            text = "was"
+        intervals [26]:
+            xmin = 9.22
+            xmax = 9.34
+            text = "that"
+        intervals [27]:
+            xmin = 9.34
+            xmax = 9.5
+            text = "you"
+        intervals [28]:
+            xmin = 9.5
+            xmax = 9.6
+            text = "were"
+        intervals [29]:
+            xmin = 9.6
+            xmax = 9.76
+            text = "trying"
+        intervals [30]:
+            xmin = 9.76
+            xmax = 9.92
+            text = "to"
+        intervals [31]:
+            xmin = 9.92
+            xmax = 10.1
+            text = "go."
+        intervals [32]:
+            xmin = 11.16
+            xmax = 11.64
+            text = "so"
+        intervals [33]:
+            xmin = 11.64
+            xmax = 12.32
+            text = "i"
+        intervals [34]:
+            xmin = 12.32
+            xmax = 12.62
+            text = "remember"
+        intervals [35]:
+            xmin = 12.62
+            xmax = 12.82
+            text = "that"
+        intervals [36]:
+            xmin = 12.82
+            xmax = 12.98
+            text = "being"
+        intervals [37]:
+            xmin = 12.98
+            xmax = 13.1
+            text = "a"
+        intervals [38]:
+            xmin = 13.1
+            xmax = 13.26
+            text = "lot"
+        intervals [39]:
+            xmin = 13.26
+            xmax = 13.48
+            text = "of"
+        intervals [40]:
+            xmin = 13.48
+            xmax = 13.56
+            text = "fun"
+        intervals [41]:
+            xmin = 13.56
+            xmax = 14.02
+            text = "and"
+        intervals [42]:
+            xmin = 14.02
+            xmax = 14.34
+            text = "easy"
+        intervals [43]:
+            xmin = 14.34
+            xmax = 14.6
+            text = "to"
+        intervals [44]:
+            xmin = 14.6
+            xmax = 14.82
+            text = "do,"
+        intervals [45]:
+            xmin = 15.48
+            xmax = 15.56
+            text = "and"
+        intervals [46]:
+            xmin = 15.56
+            xmax = 15.56
+            text = "there"
+        intervals [47]:
+            xmin = 15.56
+            xmax = 15.74
+            text = "were"
+        intervals [48]:
+            xmin = 15.74
+            xmax = 16.06
+            text = "nice"
+        intervals [49]:
+            xmin = 16.06
+            xmax = 16.3
+            text = "places"
+        intervals [50]:
+            xmin = 16.3
+            xmax = 16.64
+            text = "to"
+        intervals [51]:
+            xmin = 16.64
+            xmax = 17.12
+            text = "go,"
+        intervals [52]:
+            xmin = 19.14
+            xmax = 19.14
+            text = "and"
+        intervals [53]:
+            xmin = 19.14
+            xmax = 19.66
+            text = "good"
+        intervals [54]:
+            xmin = 19.66
+            xmax = 20.06
+            text = "events"
+        intervals [55]:
+            xmin = 20.06
+            xmax = 20.32
+            text = "to"
+        intervals [56]:
+            xmin = 20.32
+            xmax = 20.74
+            text = "attend."
+        intervals [57]:
+            xmin = 21.08
+            xmax = 21.42
+            text = "come"
+        intervals [58]:
+            xmin = 21.42
+            xmax = 22.1
+            text = "downtown,"
+        intervals [59]:
+            xmin = 22.72
+            xmax = 22.86
+            text = "and"
+        intervals [60]:
+            xmin = 22.86
+            xmax = 23.08
+            text = "we"
+        intervals [61]:
+            xmin = 23.08
+            xmax = 23.42
+            text = "wanted"
+    item [2]:
+        class = "IntervalTier"
+        name = "fillers"
+        xmin = 0
+        xmax = 11.64
+        intervals: size = 1
+        intervals [1]:
+            xmin = 11.16
+            xmax = 11.64
+            text = "so"
+    item [3]:
+        class = "IntervalTier"
+        name = "repetitions"
+        xmin = 0
+        xmax = 20.74
+        intervals: size = 3
+        intervals [1]:
+            xmin = 2.24
+            xmax = 2.54
+            text = "the"
+        intervals [2]:
+            xmin = 19.14
+            xmax = 19.66
+            text = "and"
+        intervals [3]:
+            xmin = 20.06
+            xmax = 20.74
+            text = "to"
