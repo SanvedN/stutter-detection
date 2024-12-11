@@ -18,6 +18,22 @@ app = Flask(__name__)
 UPLOAD_FOLDER = "outputs"
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 
+# At the top of app.py after imports
+try:
+    nltk.download('punkt')
+    nltk.download('punkt_tab')
+    nltk.download('averaged_perceptron_tagger')
+    nltk.download('maxent_ne_chunker')
+    nltk.download('words')
+    nltk.download('tagsets')
+except Exception as e:
+    logging.warning(f"Failed to download NLTK data: {e}")
+
+# Ensure English language is set
+os.environ['LANGUAGE'] = 'en_US.UTF-8'
+os.environ['LANG'] = 'en_US.UTF-8'
+os.environ['LC_ALL'] = 'en_US.UTF-8'
+
 # Add thread lock for safe concurrent processing
 processing_lock = threading.Lock()
 
@@ -216,5 +232,7 @@ def generate_stutter_report(result) -> str:
 
     return "\n".join(sections)
 
+# Change the run line at bottom
 if __name__ == "__main__":
-    app.run(debug=False)  # Set debug to False to avoid reloader issues
+    port = int(os.environ.get("PORT", 10000))
+    app.run(host='0.0.0.0', port=port)  # Set debug to False to avoid reloader issues
