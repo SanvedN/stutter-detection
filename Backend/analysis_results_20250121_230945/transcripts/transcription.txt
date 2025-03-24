@@ -1,0 +1,29 @@
+SPEECH ANALYSIS TRANSCRIPT
+==================================================
+
+Duration: 24.12 seconds
+Speech Rate: 59.7 words per minute
+Language Score: 0.93/1.0
+Overall Confidence: 0.00
+
+FULL TRANSCRIPTION:
+--------------------
+ Hello, um, also, um, hello, uh, uh, hello, am, uh, uh, I, audible, hello, and, uh, and, uh, I would like to speak. Thank you.
+
+TIMESTAMPED SEGMENTS:
+--------------------
+[00:00:01.560 --> 00:00:24.120]  Hello, um, also, um, hello, uh, uh, hello, am, uh, uh, I, audible, hello, and, uh, and, uh, I would like to speak. Thank you.
+
+DETAILED ANALYSIS:
+--------------------
+
+Filler Words:
+- 'like' at 00:00:22.800 (discourse)
+
+Repetitions:
+- 'hello,' repeated 5 times at 00:00:01.560
+- 'uh,' repeated 3 times at 00:00:06.720
+- 'uh,' repeated 2 times at 00:00:12.080
+- 'audible,' repeated 2 times at 00:00:14.540
+
+Grammar Issues:

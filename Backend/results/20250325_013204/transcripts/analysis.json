@@ -1,0 +1,149 @@
+{
+  "text": " Hello, um, also, um, hello, uh, uh, hello, I am, uh, uh, uh, uh, audible, hello, and, uh, and, uh, I would like to speak, thank you.",
+  "duration": 24.240000000000002,
+  "word_count": 27,
+  "fillers": {
+    "count": 1,
+    "details": [
+      {
+        "word": "like",
+        "start": 22.96,
+        "end": 23.1,
+        "type": "discourse",
+        "compound": false,
+        "confidence": 0,
+        "context": "uh, i would like to speak, thank"
+      }
+    ]
+  },
+  "repetitions": {
+    "count": 4,
+    "details": [
+      {
+        "word": "hello,",
+        "pattern": [
+          {
+            "word": "hello,",
+            "start": 1.479999999999999,
+            "end": 2.6
+          },
+          {
+            "word": "um,",
+            "start": 2.64,
+            "end": 3.68
+          },
+          {
+            "word": "also,",
+            "start": 4.22,
+            "end": 4.86
+          },
+          {
+            "word": "um,",
+            "start": 5.52,
+            "end": 6.12
+          },
+          {
+            "word": "hello,",
+            "start": 6.54,
+            "end": 7.12
+          }
+        ],
+        "count": 5,
+        "start": 1.479999999999999,
+        "end": 7.12,
+        "event_type": "repetition",
+        "repetition_type": "block",
+        "confidence": 0.0
+      },
+      {
+        "word": "uh,",
+        "pattern": [
+          {
+            "word": "uh,",
+            "start": 7.72,
+            "end": 8.44
+          },
+          {
+            "word": "uh,",
+            "start": 9.0,
+            "end": 10.04
+          },
+          {
+            "word": "hello,",
+            "start": 10.6,
+            "end": 11.12
+          }
+        ],
+        "count": 3,
+        "start": 7.72,
+        "end": 11.12,
+        "event_type": "repetition",
+        "repetition_type": "block",
+        "confidence": 0.0
+      },
+      {
+        "word": "uh,",
+        "pattern": [
+          {
+            "word": "uh,",
+            "start": 12.34,
+            "end": 13.22
+          },
+          {
+            "word": "uh,",
+            "start": 14.08,
+            "end": 14.22
+          },
+          {
+            "word": "uh,",
+            "start": 14.22,
+            "end": 14.32
+          },
+          {
+            "word": "uh,",
+            "start": 14.32,
+            "end": 14.6
+          }
+        ],
+        "count": 4,
+        "start": 12.34,
+        "end": 14.6,
+        "event_type": "repetition",
+        "repetition_type": "exact_repetition",
+        "confidence": 0.0
+      },
+      {
+        "word": "audible,",
+        "pattern": [
+          {
+            "word": "audible,",
+            "start": 15.88,
+            "end": 15.88
+          },
+          {
+            "word": "hello,",
+            "start": 16.78,
+            "end": 17.2
+          }
+        ],
+        "count": 2,
+        "start": 15.88,
+        "end": 17.2,
+        "event_type": "repetition",
+        "repetition_type": "block",
+        "confidence": 0.0
+      }
+    ]
+  },
+  "grammar_errors": {
+    "count": 1,
+    "details": [
+      {
+        "text": "like...thank",
+        "type": "inconsistent verb tense",
+        "start_pos": 108,
+        "end_pos": 128
+      }
+    ]
+  }
+}

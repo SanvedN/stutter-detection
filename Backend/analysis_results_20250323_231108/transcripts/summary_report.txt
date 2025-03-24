@@ -1,0 +1,14 @@
+SPEECH ANALYSIS SUMMARY
+==============================
+
+Key Metrics:
+- Duration: 24.12 seconds
+- Speech Rate: 59.7 words/minute
+- Language Score: 0.93/1.0
+- Confidence: 0.00/1.0
+
+Statistics:
+- Total Words: 25
+- Filler Words: 1
+- Repetitions: 4
+- Grammar Errors: 0
