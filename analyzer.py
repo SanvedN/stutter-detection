@@ -4,7 +4,7 @@ from pathlib import Path
 import numpy as np
 from datetime import datetime
 from src.utils.audio_utils import load_audio, normalize_audio, apply_noise_reduction
-from src.audio.transcription_analyzer import TranscriptionAnalyzer
+from src.audio.transcription_analyzer import TranscriptionAnalyzer, TranscriptionResult
 from src.visualization.speech_visualizer import SpeechVisualizer
 
 # Setup logging
@@ -18,7 +18,7 @@ class SpeechAnalyzer:
     def __init__(self):
         """Initialize all analysis components."""
         try:
-            self.transcriber = TranscriptionAnalyzer(model_size="large")
+            self.transcriber = TranscriptionAnalyzer(model_size="medium")
             self.visualizer = SpeechVisualizer()
             logger.info("Speech Analyzer initialized successfully")
         except Exception as e:
@@ -34,10 +34,9 @@ class SpeechAnalyzer:
             output_dir.mkdir(parents=True, exist_ok=True)
 
             viz_dir = output_dir / "visualizations"
-            reports_dir = output_dir / "reports"
             transcripts_dir = output_dir / "transcripts"
 
-            for directory in [viz_dir, reports_dir, transcripts_dir]:
+            for directory in [viz_dir, transcripts_dir]:
                 directory.mkdir(exist_ok=True)
 
             # Load and preprocess audio
@@ -54,16 +53,11 @@ class SpeechAnalyzer:
             logger.info("Generating visualizations...")
             self._generate_visualizations(audio_data, result, viz_dir)
 
-            # Generate reports
-            logger.info("Generating reports...")
-            self._generate_reports(result, reports_dir)
-
             # Return results as a dictionary
             return {
                 "transcription": result.text,
                 "stutter_events": result.repetitions + result.fillers,
                 "visualization_path": str(viz_dir / "waveform_analysis.png"),
-                "report_path": str(reports_dir / "stutter_analysis.txt"),
             }
 
         except Exception as e:

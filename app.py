@@ -2,6 +2,7 @@ from flask import Flask, request, jsonify
 from flask_cors import CORS
 from werkzeug.utils import secure_filename
 import os
+import threading
 from analyzer import SpeechAnalyzer
 
 app = Flask(__name__)
@@ -10,11 +11,21 @@ CORS(app)
 # Create necessary directories
 UPLOAD_FOLDER = "uploads/"
 RESULT_FOLDER = "results/"
+RESULTS = {}  # Store task statuses and results
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
-os.makedirs(RESULT_FOLDER, exist_ok=True)
 
 # Initialize speech analyzer
 analyzer = SpeechAnalyzer()
+
+def analyze_audio_thread(filepath, task_id):
+    """Runs the audio analysis in a background thread."""
+    try:
+        RESULTS[task_id] = {"status": "processing"}
+        result = analyzer.analyze_audio_file(filepath)
+        RESULTS[task_id] = {"status": "completed", "result": result}
+    except Exception as e:
+        RESULTS[task_id] = {"status": "failed", "error": str(e)}
+
 
 @app.route("/")
 def home():
@@ -23,7 +34,7 @@ def home():
 
 @app.route("/upload_audio", methods=["POST"])
 def upload_audio():
-    """Handles audio file upload and processing"""
+    """Handles file upload and starts processing in a separate thread."""
     if "file" not in request.files:
         return jsonify({"error": "No file uploaded"}), 400
 
@@ -32,24 +43,23 @@ def upload_audio():
     filepath = os.path.join(UPLOAD_FOLDER, filename)
     file.save(filepath)
 
-    # Process the audio
-    analysis_result = analyzer.analyze_audio_file(filepath)
+    # Generate a task ID (use filename or UUID)
+    task_id = filename.split(".")[0]  # You can replace with str(uuid.uuid4())
 
-    return jsonify(
-        {"message": "Audio processed successfully!", "result": analysis_result}
-    )
+    # Start processing in a separate thread
+    thread = threading.Thread(target=analyze_audio_thread, args=(filepath, task_id))
+    thread.start()
+
+    return jsonify({"message": "Processing started!", "task_id": task_id})
 
 
-@app.route("/get_results", methods=["GET"])
-def get_results():
-    """Fetch all processed analysis results"""
-    results = []
-    for folder in os.listdir(RESULT_FOLDER):
-        result_path = os.path.join(RESULT_FOLDER, folder, "stutter_analysis.txt")
-        if os.path.exists(result_path):
-            results.append({"report_path": result_path})
-    return jsonify(results)
+@app.route("/task_status/<task_id>", methods=["GET"])
+def task_status(task_id):
+    """Check the status of an audio analysis task."""
+    if task_id in RESULTS:
+        return jsonify(RESULTS[task_id])
+    return jsonify({"status": "not found"}), 404
 
 
 if __name__ == "__main__":
-    app.run(debug=True)
+    app.run(debug=False)
