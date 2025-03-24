@@ -49,6 +49,9 @@ class SpeechAnalyzer:
                 audio_data, sample_rate, transcripts_dir
             )
 
+            # Compute fluency score
+            fluency_score, severity = self._calculate_fluency_score(result)
+
             # Generate visualizations
             logger.info("Generating visualizations...")
             self._generate_visualizations(audio_data, result, viz_dir)
@@ -57,6 +60,8 @@ class SpeechAnalyzer:
             return {
                 "transcription": result.text,
                 "stutter_events": result.repetitions + result.fillers,
+                "fluency_score": fluency_score,
+                "severity": severity,
                 "visualization_path": str(viz_dir / "waveform_analysis.png"),
             }
 
@@ -80,3 +85,59 @@ class SpeechAnalyzer:
             sample_rate=16000,
         )
         self.visualizer.save_visualization(fig_wave, viz_dir / "waveform_analysis.png")
+
+    def _calculate_fluency_score(self, result) -> tuple:
+        """Calculate stutter fluency score and severity."""
+        total_syllables = max(1, len(result.text.split()))  # Avoid division by zero
+        stutter_events = len(result.repetitions) + len(result.fillers)
+
+        # Compute %SS (Percentage of Syllables Stuttered)
+        percent_ss = (stutter_events / total_syllables) * 100
+
+        # Extract durations safely
+        try:
+            longest_stutter = max(
+                [
+                    event.get("duration", 0)
+                    for event in result.repetitions + result.fillers
+                ],
+                default=0,
+            )
+        except AttributeError:
+            longest_stutter = 0  # Default if duration is missing
+
+        duration_score = self._get_duration_score(longest_stutter)
+
+        # Compute final fluency score
+        fluency_score = int(percent_ss) + duration_score
+
+        # Determine severity level
+        severity = self._get_severity_level(fluency_score)
+
+        return fluency_score, severity
+
+    def _get_duration_score(self, duration) -> int:
+        """Assigns duration score based on the longest stuttering event."""
+        if duration < 1.0:
+            return 2
+        elif duration < 2.0:
+            return 4
+        elif duration < 3.0:
+            return 6
+        elif duration < 5.0:
+            return 8
+        else:
+            return 10
+
+    def _get_severity_level(self, score) -> str:
+        """Determines severity level based on SSI-4 scoring tables."""
+        if score <= 10:
+            return "Very Mild"
+        elif score <= 20:
+            return "Mild"
+        elif score <= 30:
+            return "Moderate"
+        elif score <= 40:
+            return "Severe"
+        else:
+            return "Very Severe"
