@@ -61,6 +61,8 @@ class SpeechAnalyzer:
                 "transcription": result.text,
                 "stutter_events": result.repetitions + result.fillers,
                 "fluency_score": fluency_score,
+                "num_repetitions": len(result.repetitions),
+                "num_fillers": len(result.fillers),
                 "severity": severity,
                 "visualization_path": str(viz_dir / "waveform_analysis.png"),
             }
