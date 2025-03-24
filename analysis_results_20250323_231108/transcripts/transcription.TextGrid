@@ -1,0 +1,146 @@
+File type = "ooTextFile"
+Object class = "TextGrid"
+
+xmin = 0
+xmax = 24.12
+tiers? <exists>
+size = 3
+item []:
+    item [1]:
+        class = "IntervalTier"
+        name = "words"
+        xmin = 0
+        xmax = 24.12
+        intervals: size = 25
+        intervals [1]:
+            xmin = 1.5600000000000018
+            xmax = 2.22
+            text = "hello,"
+        intervals [2]:
+            xmin = 2.3
+            xmax = 2.74
+            text = "um,"
+        intervals [3]:
+            xmin = 3.14
+            xmax = 4.44
+            text = "also,"
+        intervals [4]:
+            xmin = 4.7
+            xmax = 5.62
+            text = "um,"
+        intervals [5]:
+            xmin = 5.8
+            xmax = 6.48
+            text = "hello,"
+        intervals [6]:
+            xmin = 6.72
+            xmax = 7.66
+            text = "uh,"
+        intervals [7]:
+            xmin = 8.62
+            xmax = 8.86
+            text = "uh,"
+        intervals [8]:
+            xmin = 9.2
+            xmax = 10.58
+            text = "hello,"
+        intervals [9]:
+            xmin = 10.84
+            xmax = 11.9
+            text = "am,"
+        intervals [10]:
+            xmin = 12.08
+            xmax = 12.36
+            text = "uh,"
+        intervals [11]:
+            xmin = 12.88
+            xmax = 13.2
+            text = "uh,"
+        intervals [12]:
+            xmin = 13.4
+            xmax = 14.14
+            text = "i,"
+        intervals [13]:
+            xmin = 14.54
+            xmax = 15.6
+            text = "audible,"
+        intervals [14]:
+            xmin = 15.88
+            xmax = 16.82
+            text = "hello,"
+        intervals [15]:
+            xmin = 16.98
+            xmax = 18.76
+            text = "and,"
+        intervals [16]:
+            xmin = 18.94
+            xmax = 19.34
+            text = "uh,"
+        intervals [17]:
+            xmin = 19.56
+            xmax = 20.22
+            text = "and,"
+        intervals [18]:
+            xmin = 20.22
+            xmax = 21.72
+            text = "uh,"
+        intervals [19]:
+            xmin = 21.9
+            xmax = 22.64
+            text = "i"
+        intervals [20]:
+            xmin = 22.64
+            xmax = 22.8
+            text = "would"
+        intervals [21]:
+            xmin = 22.8
+            xmax = 22.94
+            text = "like"
+        intervals [22]:
+            xmin = 22.94
+            xmax = 23.1
+            text = "to"
+        intervals [23]:
+            xmin = 23.1
+            xmax = 23.32
+            text = "speak."
+        intervals [24]:
+            xmin = 23.42
+            xmax = 23.92
+            text = "thank"
+        intervals [25]:
+            xmin = 23.92
+            xmax = 24.12
+            text = "you."
+    item [2]:
+        class = "IntervalTier"
+        name = "fillers"
+        xmin = 0
+        xmax = 22.94
+        intervals: size = 1
+        intervals [1]:
+            xmin = 22.8
+            xmax = 22.94
+            text = "like"
+    item [3]:
+        class = "IntervalTier"
+        name = "repetitions"
+        xmin = 0
+        xmax = 16.82
+        intervals: size = 4
+        intervals [1]:
+            xmin = 1.5600000000000018
+            xmax = 6.48
+            text = "hello,"
+        intervals [2]:
+            xmin = 6.72
+            xmax = 10.58
+            text = "uh,"
+        intervals [3]:
+            xmin = 12.08
+            xmax = 13.2
+            text = "uh,"
+        intervals [4]:
+            xmin = 14.54
+            xmax = 16.82
+            text = "audible,"
