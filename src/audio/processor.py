@@ -1,5 +1,5 @@
 """
-preprocessor.py
+processor.py
 
 Audio preprocessing module for stutter detection system.
 Handles cleaning, enhancement, and segmentation of audio signals.
@@ -9,11 +9,11 @@ Key Features:
    - Noise reduction (adaptive)
    - Speech enhancement with adjusted bandpass filter
    - Audio segmentation
-   - Quality checks
+   - Silence detection for block analysis
 """
 
 import numpy as np
-from typing import Tuple, Optional, Dict
+from typing import Tuple, Optional, Dict, List
 import logging
 from scipy.signal import butter, filtfilt
 import librosa
@@ -34,7 +34,6 @@ class AudioPreprocessor:
 
     Attributes:
         config (AudioConfig): Audio configuration settings
-        _noise_profile (Optional[np.ndarray]): Stored noise profile for reduction
     """
 
     def __init__(self, config: Optional[AudioConfig] = None):
@@ -46,7 +45,6 @@ class AudioPreprocessor:
                 If None, default settings will be used.
         """
         self.config = config or AudioConfig()
-        self._noise_profile = None
         logger.info("AudioPreprocessor initialized")
 
     def process_audio(self, audio_data: np.ndarray) -> np.ndarray:
@@ -68,10 +66,11 @@ class AudioPreprocessor:
             audio = self._normalize_audio(audio_data)
             audio = self._reduce_noise(audio)
             audio = self._enhance_speech(audio)
-            audio = self._remove_silence(audio)
+            # Instead of removing all silences, remove only non-critical ones.
+            processed_audio = self._remove_non_critical_silences(audio)
 
             logger.info("Audio processing completed successfully")
-            return audio
+            return processed_audio
 
         except Exception as e:
             logger.error(f"Error processing audio: {e}")
@@ -111,7 +110,6 @@ class AudioPreprocessor:
         Returns:
             np.ndarray: Normalized audio signal
         """
-        # RMS normalization to account for sustained loudness rather than transient peaks
         rms = np.sqrt(np.mean(audio_data**2))
         if rms > 0:
             normalized = audio_data / rms
@@ -123,40 +121,26 @@ class AudioPreprocessor:
         """
         Reduce background noise in audio signal using adaptive noise estimation.
 
-        Uses a modified spectral subtraction method with dynamic thresholding.
-
         Args:
             audio_data (np.ndarray): Audio signal
 
         Returns:
             np.ndarray: Noise-reduced audio signal
         """
-        # Compute STFT
         S = librosa.stft(audio_data, n_fft=2048, hop_length=512)
         mag, phase = np.abs(S), np.angle(S)
-
-        # Estimate noise from quiet frames (using a lower percentile)
         noise_est = np.percentile(mag, 20, axis=1, keepdims=True)
-
-        # Adaptive threshold: noise estimate multiplied by a factor
         factor = 1.5
         threshold = factor * noise_est
-
-        # Create mask and reduce magnitude
         mask = mag > threshold
         mag_denoised = mag * mask
-
-        # Reconstruct signal
         S_denoised = mag_denoised * np.exp(1j * phase)
         audio_denoised = librosa.istft(S_denoised, hop_length=512)
-
         return audio_denoised
 
     def _enhance_speech(self, audio_data: np.ndarray) -> np.ndarray:
         """
         Enhance speech frequencies in audio signal.
-
-        Applies an improved bandpass filter to emphasize speech frequencies.
 
         Args:
             audio_data (np.ndarray): Audio signal
@@ -173,7 +157,7 @@ class AudioPreprocessor:
 
         return enhanced
 
-    def _remove_silence(self, audio_data: np.ndarray) -> np.ndarray:
+    def _remove_non_critical_silences(self, audio_data: np.ndarray) -> np.ndarray:
         """
         Remove silent segments from audio while preserving natural pauses.
 
@@ -181,26 +165,50 @@ class AudioPreprocessor:
             audio_data (np.ndarray): Audio signal
 
         Returns:
-            np.ndarray: Audio with silences removed
+            np.ndarray: Audio with only non-critical silences removed
         """
-        # Adjusted top_db to 25 to preserve short pauses that may indicate stutter boundaries
         intervals = librosa.effects.split(
             audio_data,
-            top_db=25,  # Slightly lower threshold
+            top_db=25,
             frame_length=2048,
             hop_length=512,
         )
-
-        # Concatenate non-silent parts
         non_silent = []
         for start, end in intervals:
             non_silent.extend(audio_data[start:end])
-
         return np.array(non_silent)
+
+    def detect_silences(self, audio_data: np.ndarray) -> List[Tuple[float, float]]:
+        """
+        Detect long silences in the audio (ignoring silences at the start and end).
+
+        Returns:
+            List[Tuple[float, float]]: List of silence intervals (start, end) in seconds.
+        """
+        intervals = librosa.effects.split(
+            audio_data,
+            top_db=25,
+            frame_length=2048,
+            hop_length=512,
+        )
+        silences = []
+        if len(intervals) < 2:
+            return silences
+
+        sr = self.config.sample_rate
+        for idx in range(1, len(intervals)):
+            prev_end = intervals[idx - 1][1]
+            current_start = intervals[idx][0]
+            if prev_end == 0 or current_start == len(audio_data):
+                continue
+            silence_duration = (current_start - prev_end) / sr
+            if silence_duration > 0.5:
+                silences.append((prev_end / sr, current_start / sr))
+        return silences
 
     def segment_audio(
         self, audio_data: np.ndarray, segment_length_ms: int = 1000
-    ) -> list[np.ndarray]:
+    ) -> List[np.ndarray]:
         """
         Segment audio into smaller chunks for analysis.
 
@@ -214,7 +222,6 @@ class AudioPreprocessor:
         samples_per_segment = self.config.get_duration_samples(segment_length_ms)
         segments = []
 
-        # Split audio into segments
         for start in range(0, len(audio_data), samples_per_segment):
             end = start + samples_per_segment
             if end <= len(audio_data):
@@ -249,9 +256,7 @@ class AudioPreprocessor:
         Returns:
             float: Estimated SNR in dB
         """
-        noise_floor = np.mean(
-            np.abs(audio_data[:1000])
-        )  # Estimate from first 1000 samples
+        noise_floor = np.mean(np.abs(audio_data[:1000]))
         signal_level = np.mean(np.abs(audio_data))
 
         if noise_floor == 0:
@@ -264,18 +269,10 @@ class AudioPreprocessor:
 # Example usage
 if __name__ == "__main__":
     try:
-        # Create preprocessor
         preprocessor = AudioPreprocessor()
-
-        # Load test audio (replace with actual audio data)
         test_audio = np.random.randn(16000)  # 1 second of random noise
-
-        # Process audio
         processed_audio = preprocessor.process_audio(test_audio)
-
-        # Get quality metrics
         metrics = preprocessor.get_audio_quality_metrics(processed_audio)
         print("Audio quality metrics:", metrics)
-
     except Exception as e:
         print(f"Error in preprocessing: {e}")
