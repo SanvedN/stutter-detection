@@ -126,5 +126,15 @@ def get_transcript(task_id):
     return jsonify({"error": "Transcript not found"}), 404
 
 
+@app.route("/get_passage_comparison/<task_id>", methods=["GET"])
+def get_passage_comparison(task_id):
+    """Get detailed passage comparison results."""
+    if task_id in RESULTS and RESULTS[task_id]["status"] == "completed":
+        result = RESULTS[task_id]["result"]
+        if "passage_comparison" in result:
+            return jsonify(result["passage_comparison"])
+    return jsonify({"error": "Comparison data not found"}), 404
+
+
 if __name__ == "__main__":
     app.run(debug=False)

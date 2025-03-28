@@ -2,126 +2,84 @@
 transcription_analyzer.py
 
 Enhanced speech transcription and analysis module with high accuracy detection.
-Handles transcription, filler detection, repetition detection (with reference-based checking),
-and exports in multiple formats.
+Handles transcription, filler detection, and exports in multiple formats.
 
-Modifications:
-   - Removed grammar checking.
-   - Added reference-based discrepancy check using the provided "grandfather's passage".
-   - Incorporated forced alignment for phoneme-level analysis (dummy implementation provided).
+Features:
+   - High-accuracy speech-to-text conversion
+   - Advanced stutter detection (repetitions, prolongations, blocks)
+   - Multiple export formats (TXT, VTT, TextGrid, JSON)
+   - Comprehensive analysis reports
+   - Reference text comparison
 """
 
-import difflib
-import numpy as np
 import whisper
+import numpy as np
+from typing import Dict, List, Tuple, Optional, Set, Union
+from pathlib import Path
+import logging
+from dataclasses import dataclass
 import torch
 import re
+from datetime import datetime
+import tgt
 import json
-import spacy
 import nltk
-from pathlib import Path
-from dataclasses import dataclass
-from nltk.tokenize import word_tokenize, sent_tokenize
+from nltk.tokenize import word_tokenize
+from nltk.util import ngrams
+from nltk.tokenize import sent_tokenize
+import string
+import Levenshtein
+import librosa
 
 # Download required NLTK data
 try:
     nltk.download("punkt")
-    nltk.download("averaged_perceptron_tagger")
+    nltk.download("words")
 except Exception as e:
-    print(f"Warning: {e}")
+    logging.warning(f"Failed to download NLTK data: {e}")
 
-# Initialize spaCy
-try:
-    nlp = spacy.load("en_core_web_sm")
-except Exception as e:
-    print(f"Warning: {e}")
-
-import logging
-
+# Setup logging
 logging.basicConfig(
     level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s"
 )
 logger = logging.getLogger(__name__)
 
-
-# --- Dummy Forced Alignment Module ---
-# In a production system, replace this with a proper forced alignment library.
-class ForcedAlignmentModule:
-    @staticmethod
-    def align(audio_data: np.ndarray, transcript: str, sample_rate: int) -> list:
-        """
-        Dummy forced alignment: returns a list of phoneme alignments.
-        For each word, splits it into letters and assigns arbitrary timings.
-        """
-        alignments = []
-        words = transcript.split()
-        total_duration = len(audio_data) / sample_rate
-        time_per_word = total_duration / max(len(words), 1)
-        current_time = 0.0
-        for word in words:
-            phonemes = list(word)  # Dummy: each letter as a phoneme
-            phoneme_duration = time_per_word / max(len(phonemes), 1)
-            phoneme_list = []
-            for phon in phonemes:
-                phoneme_list.append(
-                    {
-                        "phoneme": phon,
-                        "start": current_time,
-                        "end": current_time + phoneme_duration,
-                    }
-                )
-                current_time += phoneme_duration
-            alignments.append({"word": word, "phonemes": phoneme_list})
-        return alignments
-
-
-# Use the dummy forced alignment module
-forced_alignment_module = ForcedAlignmentModule()
-
-# Grandfather's passage is defined here as a constant.
-GRANDFATHERS_PASSAGE = (
-    "You wished to know all about my grandfather. Well, he is nearly ninety-three years old. "
-    "He dresses himself in an ancient black frock coat, usually minus several buttons; yet he still thinks as swiftly as ever. "
-    "A long, flowing beard clings to his chin, giving those who observe him a pronounced feeling of the utmost respect. "
-    "When he speaks his voice is just a bit cracked and quivers a trifle. "
-    "Twice each day he plays skillfully and with zest upon our small organ. "
-    "Except in the winter when the ooze or snow or ice prevents, he slowly takes a short walk in the open air each day. "
-    "We have often urged him to walk more and smoke less, but he always answers, “Banana Oil!” "
-    "Grandfather likes to be modern in his language."
-)
+# Grandfather's passage for reference
+GRANDFATHERS_PASSAGE = """You wished to know all about my grandfather. Well, he is nearly ninety-three years old. He dresses himself in an ancient black frock coat, usually minus several buttons; yet he still thinks as swiftly as ever. A long, flowing beard clings to his chin, giving those who observe him a pronounced feeling of the utmost respect. When he speaks his voice is just a bit cracked and quivers a trifle. Twice each day he plays skillfully and with zest upon our small organ. Except in the winter when the ooze or snow or ice prevents, he slowly takes a short walk in the open air each day. We have often urged him to walk more and smoke less, but he always answers, "Banana Oil!" Grandfather likes to be modern in his language."""
 
 
 @dataclass
 class TranscriptionResult:
-    """
-    Container for transcription analysis results.
-    Fields related to grammar errors have been removed.
-    """
+    """Container for transcription analysis results."""
 
     text: str
-    segments: list
-    word_timings: list
-    fillers: list
-    repetitions: list
+    segments: List[Dict]
+    word_timings: List[Dict]
+    fillers: List[Dict]
+    repetitions: List[Dict]
+    pronunciation_errors: List[Dict]
     confidence: float
     duration: float
     speech_rate: float
     language_score: float
-    phoneme_alignments: list  # Forced alignment output
+    silences: List[Dict]
 
 
 class TranscriptionAnalyzer:
     def __init__(self, model_size: str = "large"):
         """
         Initialize with high-accuracy speech recognition.
+
         Args:
             model_size: Whisper model size (recommended: "large" for best accuracy)
         """
         try:
+            # Load Whisper model
             self.model = whisper.load_model(model_size)
             self.device = "cuda" if torch.cuda.is_available() else "cpu"
             self.model.to(self.device)
-            # Define filler and repetition patterns as needed.
+
+            # Comprehensive filler and speech disfluency patterns
             self.speech_patterns = {
                 "hesitation": {
                     "single": ["uh", "um", "er", "ah", "eh", "hm", "hmm", "erm"],
@@ -141,10 +99,17 @@ class TranscriptionAnalyzer:
                 ],
                 "repetition_markers": ["th-th", "st-st", "wh-wh", "b-b"],
             }
+
+            # Compile regex patterns
             self._compile_patterns()
+
+            # Prepare reference text
+            self.reference_words = word_tokenize(GRANDFATHERS_PASSAGE.lower())
+
             logger.info(
                 f"TranscriptionAnalyzer initialized with {model_size} model on {self.device}"
             )
+
         except Exception as e:
             logger.error(f"Error initializing TranscriptionAnalyzer: {e}")
             raise
@@ -167,83 +132,443 @@ class TranscriptionAnalyzer:
                     r"\b(" + "|".join(patterns) + r")\b", re.IGNORECASE
                 )
 
+    def analyze_audio(
+        self, audio_data: np.ndarray, sample_rate: int, output_dir: Path
+    ) -> TranscriptionResult:
+        """
+        Perform complete audio analysis with enhanced accuracy.
+
+        Args:
+            audio_data: Audio signal
+            sample_rate: Audio sample rate
+            output_dir: Directory for output files
+
+        Returns:
+            TranscriptionResult containing detailed analysis
+        """
+        try:
+            output_dir.mkdir(parents=True, exist_ok=True)
+
+            # Perform enhanced transcription
+            result = self.transcribe_with_enhanced_detection(audio_data, sample_rate)
+
+            # Save results in multiple formats
+            self.save_all_formats(result, output_dir)
+
+            return result
+
+        except Exception as e:
+            logger.error(f"Error in audio analysis: {e}")
+            raise
+
     def transcribe_with_enhanced_detection(
         self, audio_data: np.ndarray, sample_rate: int
     ) -> TranscriptionResult:
-        """
-        Perform high-accuracy transcription with enhanced detection.
-        """
+        """Perform high-accuracy transcription with enhanced detection."""
         try:
+            # Initial transcription with optimized settings
             result = self.model.transcribe(
                 audio_data,
                 language="en",
                 word_timestamps=True,
                 condition_on_previous_text=True,
-                initial_prompt="Include hesitations, fillers, repetitions, and partial words exactly as spoken.",
+                initial_prompt="Include hesitations, fillers, repetitions, and partial words exactly as spoken. This is the Grandfather's Passage.",
                 temperature=0.0,
                 compression_ratio_threshold=2.4,
                 no_speech_threshold=0.6,
                 logprob_threshold=-1.0,
                 beam_size=5,
             )
+
+            # Enhanced processing
             segments = self._post_process_segments(result["segments"])
             word_timings = self._extract_enhanced_word_timings(segments)
             fillers = self._detect_fillers_with_context(word_timings)
             repetitions = self._enhanced_repetition_detection(word_timings)
-            phoneme_alignments = forced_alignment_module.align(
-                audio_data, result["text"], sample_rate
-            )
-            confidence = np.mean([seg.get("confidence", 0) for seg in segments])
+            pronunciation_errors = self._detect_pronunciation_errors(word_timings)
+            silences = self._detect_silences(audio_data, sample_rate, segments)
+
+            # Calculate metrics
+            confidence = np.mean([segment.get("confidence", 0) for segment in segments])
             duration = segments[-1]["end"] if segments else 0
             speech_rate = self._calculate_speech_rate(word_timings, duration)
             language_score = self._calculate_language_score(result["text"])
+
             return TranscriptionResult(
                 text=result["text"],
                 segments=segments,
                 word_timings=word_timings,
                 fillers=fillers,
                 repetitions=repetitions,
+                pronunciation_errors=pronunciation_errors,
                 confidence=confidence,
                 duration=duration,
                 speech_rate=speech_rate,
                 language_score=language_score,
-                phoneme_alignments=phoneme_alignments,
+                silences=silences,
             )
+
         except Exception as e:
             logger.error(f"Error in enhanced transcription: {e}")
             raise
 
-    def check_transcription_against_reference(self, transcription: str) -> list:
-        """
-        Compare the transcription against the known grandfather's passage
-        to identify potential mis-transcriptions.
-        """
-        discrepancies = []
-        ref_words = GRANDFATHERS_PASSAGE.lower().split()
-        trans_words = transcription.lower().split()
-        matcher = difflib.SequenceMatcher(None, ref_words, trans_words)
-        for tag, i1, i2, j1, j2 in matcher.get_opcodes():
-            if tag != "equal":
-                discrepancies.append(
+    def _extract_enhanced_word_timings(self, segments: List[Dict]) -> List[Dict]:
+        """Extract detailed word timings with confidence scores."""
+        word_timings = []
+
+        for segment in segments:
+            words = segment.get("words", [])
+            for i, word_info in enumerate(words):
+                if not isinstance(word_info, dict):
+                    continue
+
+                word = word_info.get("word", "").strip().lower()
+                if not word:
+                    continue
+
+                # Check for partial words and stutters
+                is_partial = bool(re.search(r"-", word))
+                is_stutter = bool(re.search(r"([a-z])\1+", word))
+
+                timing = {
+                    "word": word,
+                    "start": word_info.get("start", segment["start"]),
+                    "end": word_info.get("end", segment["end"]),
+                    "confidence": word_info.get("confidence", 0.0),
+                    "is_partial": is_partial,
+                    "is_stutter": is_stutter,
+                    "segment_id": segment["id"],
+                }
+
+                word_timings.append(timing)
+
+        return word_timings
+
+    def _detect_fillers_with_context(self, word_timings: List[Dict]) -> List[Dict]:
+        """Detect filler words with context analysis."""
+        fillers = []
+        window_size = 3
+
+        for i, word_info in enumerate(word_timings):
+            word = word_info["word"].lower()
+
+            # Get context window
+            start_idx = max(0, i - window_size)
+            end_idx = min(len(word_timings), i + window_size + 1)
+            context = word_timings[start_idx:end_idx]
+
+            # Check for single-word fillers
+            for category, patterns in self.pattern_regexes.items():
+                if isinstance(patterns, dict):
+                    if patterns["single"].search(word):
+                        if self._validate_filler_context(word, context):
+                            fillers.append(
+                                self._create_filler_entry(word_info, category, context)
+                            )
+
+                    # Check for compound fillers
+                    if i < len(word_timings) - 1:
+                        compound = f"{word} {word_timings[i+1]['word']}".lower()
+                        if patterns["compound"].search(compound):
+                            fillers.append(
+                                self._create_filler_entry(
+                                    word_info,
+                                    category,
+                                    context,
+                                    end_time=word_timings[i + 1]["end"],
+                                    compound=True,
+                                )
+                            )
+
+        return fillers
+
+    def _create_filler_entry(
+        self,
+        word_info: Dict,
+        category: str,
+        context: List[Dict],
+        end_time: float = None,
+        compound: bool = False,
+    ) -> Dict:
+        """Create standardized filler entry."""
+        return {
+            "word": word_info["word"],
+            "start": word_info["start"],
+            "end": end_time or word_info["end"],
+            "event_type": "filler",  # Standardized event type
+            "filler_type": category,  # Specific filler category
+            "compound": compound,
+            "confidence": word_info["confidence"],
+            "context": " ".join(w["word"] for w in context),
+        }
+
+    def _enhanced_repetition_detection(self, word_timings: List[Dict]) -> List[Dict]:
+        """Improved repetition detection focusing on short interval repetitions."""
+        repetitions = []
+        max_time_between_repetitions = 1.0  # Maximum 1 second between repetitions
+
+        # Process words in sequence
+        i = 0
+        while i < len(word_timings) - 1:
+            current_word = word_timings[i]["word"].lower().strip(string.punctuation)
+            if not current_word:  # Skip empty words
+                i += 1
+                continue
+
+            # Look for repetitions in a short time window
+            repetition_sequence = [
+                {
+                    "word": current_word,
+                    "start": word_timings[i]["start"],
+                    "end": word_timings[i]["end"],
+                }
+            ]
+            j = i + 1
+
+            while j < len(word_timings):
+                next_word = word_timings[j]["word"].lower().strip(string.punctuation)
+                time_gap = word_timings[j]["start"] - word_timings[j - 1]["end"]
+
+                # Check if this is a repetition within the time threshold
+                if (
+                    self._is_repetition(current_word, next_word)
+                    and time_gap <= max_time_between_repetitions
+                ):
+                    repetition_sequence.append(
+                        {
+                            "word": next_word,
+                            "start": word_timings[j]["start"],
+                            "end": word_timings[j]["end"],
+                        }
+                    )
+                    j += 1
+                else:
+                    break
+
+            # If we found repetitions (more than 1 occurrence)
+            if len(repetition_sequence) > 1:
+                repetitions.append(
                     {
-                        "ref_segment": " ".join(ref_words[i1:i2]),
-                        "trans_segment": " ".join(trans_words[j1:j2]),
-                        "discrepancy_type": tag,
-                        "ref_indices": (i1, i2),
-                        "trans_indices": (j1, j2),
+                        "word": current_word,
+                        "pattern": repetition_sequence,
+                        "count": len(repetition_sequence),
+                        "start": repetition_sequence[0]["start"],
+                        "end": repetition_sequence[-1]["end"],
+                        "event_type": "repetition",
+                        "repetition_type": (
+                            "continuous" if len(repetition_sequence) > 2 else "simple"
+                        ),
+                        "confidence": 0.9,  # High confidence for detected repetitions
                     }
                 )
-        return discrepancies
+                i = j  # Skip the words we've already processed
+            else:
+                i += 1
 
-    def _post_process_segments(self, segments: list) -> list:
+        return repetitions
+
+    def _is_repetition(self, word1: str, word2: str) -> bool:
+        """Check if two words represent a repetition."""
+        # Exact match
+        if word1 == word2:
+            return True
+
+        # Check for partial word repetitions (e.g., "st-stutter")
+        if len(word1) >= 2 and len(word2) >= 2:
+            # Check if they share the same beginning
+            if word1.startswith(word2[:2]) or word2.startswith(word1[:2]):
+                return True
+
+        # Check for phonetic similarity
+        similarity = Levenshtein.ratio(word1, word2)
+        if similarity > 0.8:  # High similarity threshold
+            return True
+
+        return False
+
+    def _detect_pronunciation_errors(self, word_timings: List[Dict]) -> List[Dict]:
+        """Detect pronunciation errors by comparing with reference text."""
+        errors = []
+
+        # Extract words from transcription
+        transcribed_words = [
+            w["word"].lower().strip(string.punctuation)
+            for w in word_timings
+            if w["word"].strip() and not self._is_filler(w["word"])
+        ]
+
+        # Compare with reference text using dynamic programming for alignment
+        alignment = self._align_texts(transcribed_words, self.reference_words)
+
+        for i, (trans_idx, ref_idx) in enumerate(alignment):
+            if trans_idx is not None and ref_idx is not None:
+                trans_word = transcribed_words[trans_idx]
+                ref_word = self.reference_words[ref_idx]
+
+                # Check for pronunciation errors
+                if trans_word != ref_word:
+                    # Calculate edit distance to determine severity
+                    distance = Levenshtein.distance(trans_word, ref_word)
+                    similarity = Levenshtein.ratio(trans_word, ref_word)
+
+                    # Only report if words are somewhat similar but not identical
+                    if 0.5 < similarity < 0.9:
+                        word_info = word_timings[
+                            self._find_word_timing_index(trans_word, word_timings)
+                        ]
+                        errors.append(
+                            {
+                                "word": trans_word,
+                                "reference": ref_word,
+                                "start": word_info["start"],
+                                "end": word_info["end"],
+                                "event_type": "pronunciation_error",
+                                "confidence": 1.0 - similarity,
+                                "severity": distance
+                                / max(len(trans_word), len(ref_word)),
+                            }
+                        )
+
+                # Check for prolonged sounds in the transcribed word
+                if re.search(
+                    r"([a-z])\1{2,}", trans_word
+                ):  # Repeated letters like "sssshort"
+                    word_info = word_timings[
+                        self._find_word_timing_index(trans_word, word_timings)
+                    ]
+                    errors.append(
+                        {
+                            "word": trans_word,
+                            "reference": ref_word if ref_idx is not None else "",
+                            "start": word_info["start"],
+                            "end": word_info["end"],
+                            "event_type": "prolongation",
+                            "confidence": 0.9,
+                            "severity": 0.7,
+                        }
+                    )
+
+        return errors
+
+    def _find_word_timing_index(self, word: str, word_timings: List[Dict]) -> int:
+        """Find the index of a word in word_timings."""
+        for i, timing in enumerate(word_timings):
+            if timing["word"].lower().strip(string.punctuation) == word:
+                return i
+        return 0  # Default to first word if not found
+
+    def _align_texts(
+        self, transcribed: List[str], reference: List[str]
+    ) -> List[Tuple[Optional[int], Optional[int]]]:
+        """Align transcribed text with reference text using dynamic programming."""
+        # Create a matrix of edit distances
+        m, n = len(transcribed), len(reference)
+        dp = [[0 for _ in range(n + 1)] for _ in range(m + 1)]
+
+        # Initialize first row and column
+        for i in range(m + 1):
+            dp[i][0] = i
+        for j in range(n + 1):
+            dp[0][j] = j
+
+        # Fill the matrix
+        for i in range(1, m + 1):
+            for j in range(1, n + 1):
+                if transcribed[i - 1] == reference[j - 1]:
+                    dp[i][j] = dp[i - 1][j - 1]
+                else:
+                    dp[i][j] = min(
+                        dp[i - 1][j - 1] + 1,  # substitution
+                        dp[i - 1][j] + 1,  # deletion
+                        dp[i][j - 1] + 1,
+                    )  # insertion
+
+        # Backtrack to find alignment
+        alignment = []
+        i, j = m, n
+        while i > 0 or j > 0:
+            if i > 0 and j > 0 and transcribed[i - 1] == reference[j - 1]:
+                alignment.append((i - 1, j - 1))
+                i -= 1
+                j -= 1
+            elif i > 0 and j > 0 and dp[i][j] == dp[i - 1][j - 1] + 1:
+                alignment.append((i - 1, j - 1))  # substitution
+                i -= 1
+                j -= 1
+            elif i > 0 and dp[i][j] == dp[i - 1][j] + 1:
+                alignment.append((i - 1, None))  # deletion
+                i -= 1
+            else:
+                alignment.append((None, j - 1))  # insertion
+                j -= 1
+
+        return list(reversed(alignment))
+
+    def _detect_silences(
+        self, audio_data: np.ndarray, sample_rate: int, segments: List[Dict]
+    ) -> List[Dict]:
+        """Detect long silences between words (not at start or end)."""
+        silences = []
+
+        # Parameters for silence detection
+        min_silence_duration = 0.5  # Minimum silence duration in seconds
+        threshold_db = -40  # Silence threshold in dB
+
+        # Convert to mono if needed
+        if len(audio_data.shape) > 1:
+            audio_data = np.mean(audio_data, axis=1)
+
+        # Get non-silent intervals
+        intervals = librosa.effects.split(
+            audio_data,
+            top_db=-threshold_db,
+            frame_length=int(0.025 * sample_rate),
+            hop_length=int(0.010 * sample_rate),
+        )
+
+        # Convert frame indices to seconds
+        intervals_sec = [
+            (start / sample_rate, end / sample_rate) for start, end in intervals
+        ]
+
+        # Find silences between speech segments (not at start/end)
+        if len(intervals_sec) > 1:
+            for i in range(len(intervals_sec) - 1):
+                silence_start = intervals_sec[i][1]
+                silence_end = intervals_sec[i + 1][0]
+                silence_duration = silence_end - silence_start
+
+                # Only report significant silences
+                if silence_duration >= min_silence_duration:
+                    silences.append(
+                        {
+                            "start": silence_start,
+                            "end": silence_end,
+                            "duration": silence_duration,
+                            "event_type": "silence",
+                            "position": "middle",
+                        }
+                    )
+
+        return silences
+
+    def _post_process_segments(self, segments: List[Dict]) -> List[Dict]:
+        """Enhanced post-processing of segments."""
         processed_segments = []
+
         for segment in segments:
+            # Handle timing adjustments
             start_time = segment["start"]
             end_time = segment["end"]
+
+            # Clean text while preserving speech patterns
             text = segment["text"]
+
+            # Process words with confidence scores
             words = segment.get("words", [])
             if words:
                 words = [self._process_word_info(w) for w in words]
+
             processed_segments.append(
                 {
                     "id": segment.get("id", len(processed_segments)),
@@ -254,199 +579,57 @@ class TranscriptionAnalyzer:
                     "confidence": segment.get("confidence", 0.0),
                 }
             )
+
         return processed_segments
 
-    def _process_word_info(self, word_info: dict) -> dict:
+    def _process_word_info(self, word_info: Dict) -> Dict:
+        """Process individual word information."""
         if not isinstance(word_info, dict):
             return {}
+
         return {
             "word": word_info.get("word", "").strip(),
             "start": word_info.get("start", 0),
             "end": word_info.get("end", 0),
             "confidence": word_info.get("confidence", 0),
-            "is_partial": bool(re.search(r"-", word_info.get("word", ""))),
+            "probability": word_info.get("probability", 0),
         }
 
-    def _extract_enhanced_word_timings(self, segments: list) -> list:
-        word_timings = []
-        for segment in segments:
-            words = segment.get("words", [])
-            for word_info in words:
-                if not isinstance(word_info, dict):
-                    continue
-                word = word_info.get("word", "").strip().lower()
-                if not word:
-                    continue
-                timing = {
-                    "word": word,
-                    "start": word_info.get("start", segment["start"]),
-                    "end": word_info.get("end", segment["end"]),
-                    "confidence": word_info.get("confidence", 0.0),
-                    "is_partial": word_info.get("is_partial", False),
-                    "segment_id": segment["id"],
-                }
-                word_timings.append(timing)
-        return word_timings
-
-    def _detect_fillers_with_context(self, word_timings: list) -> list:
-        fillers = []
-        window_size = 3
-        for i, word_info in enumerate(word_timings):
-            word = word_info["word"].lower()
-            start_idx = max(0, i - window_size)
-            end_idx = min(len(word_timings), i + window_size + 1)
-            context = word_timings[start_idx:end_idx]
-            for category, patterns in self.pattern_regexes.items():
-                if isinstance(patterns, dict) and patterns["single"].search(word):
-                    if self._validate_filler_context(word, context):
-                        fillers.append(
-                            self._create_filler_entry(word_info, category, context)
-                        )
-                if i < len(word_timings) - 1:
-                    compound = f"{word} {word_timings[i+1]['word']}".lower()
-                    if isinstance(patterns, dict) and patterns["compound"].search(
-                        compound
-                    ):
-                        fillers.append(
-                            self._create_filler_entry(
-                                word_info,
-                                category,
-                                context,
-                                end_time=word_timings[i + 1]["end"],
-                                compound=True,
-                            )
-                        )
-        return fillers
-
-    def _create_filler_entry(
-        self,
-        word_info: dict,
-        category: str,
-        context: list,
-        end_time: float = None,
-        compound: bool = False,
-    ) -> dict:
-        return {
-            "word": word_info["word"],
-            "start": word_info["start"],
-            "end": end_time or word_info["end"],
-            "event_type": "filler",
-            "filler_type": category,
-            "compound": compound,
-            "confidence": word_info["confidence"],
-            "context": " ".join(w["word"] for w in context),
-        }
-
-    def _enhanced_repetition_detection(self, word_timings: list) -> list:
-        repetitions = []
-        i = 0
-        max_gap = 0.5  # seconds
-        while i < len(word_timings) - 1:
-            current_word = word_timings[i]["word"].lower()
-            pattern = []
-            pattern_start = word_timings[i]["start"]
-            j = i
-            while j < len(word_timings):
-                next_word = word_timings[j]["word"].lower()
-                if current_word == next_word or self._is_stutter_pattern(
-                    current_word, next_word
-                ):
-                    if j > i:
-                        gap = word_timings[j]["start"] - word_timings[j - 1]["end"]
-                        if gap > max_gap:
-                            break
-                    pattern.append(
-                        {
-                            "word": next_word,
-                            "start": word_timings[j]["start"],
-                            "end": word_timings[j]["end"],
-                        }
-                    )
-                    j += 1
-                else:
-                    break
-            if len(pattern) > 1:
-                repetitions.append(
-                    {
-                        "word": current_word,
-                        "pattern": pattern,
-                        "count": len(pattern),
-                        "start": pattern_start,
-                        "end": pattern[-1]["end"],
-                        "event_type": "repetition",
-                        "repetition_type": self._classify_repetition_type(pattern),
-                        "confidence": np.mean(
-                            [w.get("confidence", 0) for w in pattern]
-                        ),
-                    }
-                )
-                i = j
-            else:
-                i += 1
-        return repetitions
-
-    def _is_stutter_pattern(self, word1: str, word2: str) -> bool:
-        word1 = word1.strip(".,!?")
-        word2 = word2.strip(".,!?")
-        if word1 == word2:
-            return True
-        if (
-            len(word1) >= 2
-            and len(word2) >= 2
-            and (word1.startswith(word2[:2]) or word2.startswith(word1[:2]))
-        ):
-            return True
-        return False
-
-    def _classify_repetition_type(self, pattern: list) -> str:
-        words = [p["word"] for p in pattern]
-        if all(w == words[0] for w in words):
-            return "exact_repetition"
-        if all(len(w) >= 2 and w.startswith(words[0][:2]) for w in words):
-            return "partial_repetition"
-        return "complex_repetition"
-
-    def _validate_filler_context(self, word: str, context: list) -> bool:
+    def _validate_filler_context(self, word: str, context: List[Dict]) -> bool:
+        """Validate if word is used as filler based on context."""
         context_words = [w["word"].lower() for w in context]
+
+        # Hesitations are always fillers
         if any(word == p for p in self.speech_patterns["hesitation"]["single"]):
             return True
+
+        # Check discourse markers
         if word in self.speech_patterns["discourse"]["single"]:
-            try:
-                index = context_words.index(word)
-                prev_words = context_words[:index]
-                next_words = context_words[index + 1 :]
-                if not self._is_grammatical_usage(word, prev_words, next_words):
-                    return True
-            except ValueError:
-                pass
+            prev_words = context_words[: context_words.index(word)]
+            next_words = context_words[context_words.index(word) + 1 :]
+
+            # Check if word breaks natural sentence flow
+            if not self._is_grammatical_usage(word, prev_words, next_words):
+                return True
+
         return False
 
     def _is_grammatical_usage(
-        self, word: str, prev_words: list, next_words: list
+        self, word: str, prev_words: List[str], next_words: List[str]
     ) -> bool:
-        try:
-            context_text = " ".join(prev_words + [word] + next_words)
-            doc = nlp(context_text)
-            for token in doc:
-                if token.text.lower() == word.lower():
-                    if token.dep_ in ["discourse", "intj"]:
-                        return False
-                    return any(token in chunk for chunk in doc.noun_chunks)
-        except Exception:
-            pass
-        return True
+        """Check if word is used grammatically in context."""
+        # Simple heuristic for grammatical usage
+        if not prev_words and not next_words:
+            return False
 
-    def _calculate_speech_rate(self, word_timings: list, duration: float) -> float:
-        if duration <= 0:
-            return 0.0
-        content_words = [
-            w
-            for w in word_timings
-            if not w.get("is_partial") and not self._is_filler(w["word"])
-        ]
-        return len(content_words) / (duration / 60)
+        # Check if the word is surrounded by proper context
+        if prev_words and next_words:
+            return True
+
+        return False
 
     def _is_filler(self, word: str) -> bool:
+        """Check if word is in filler patterns."""
         word = word.lower()
         for patterns in self.speech_patterns.values():
             if isinstance(patterns, dict):
@@ -456,46 +639,59 @@ class TranscriptionAnalyzer:
                 return True
         return False
 
+    def _calculate_speech_rate(
+        self, word_timings: List[Dict], duration: float
+    ) -> float:
+        """Calculate speech rate in words per minute."""
+        if duration <= 0:
+            return 0.0
+
+        # Count content words (excluding fillers and partial words)
+        content_words = [
+            w
+            for w in word_timings
+            if not w.get("is_partial") and not self._is_filler(w["word"])
+        ]
+
+        return len(content_words) / (duration / 60)
+
     def _calculate_language_score(self, text: str) -> float:
-        try:
-            doc = nlp(text)
-            grammar_score = self._calculate_grammar_score(doc)
-            fluency_score = self._calculate_fluency_score(doc)
-            complexity_score = self._calculate_complexity_score(doc)
-            return grammar_score * 0.4 + fluency_score * 0.3 + complexity_score * 0.3
-        except Exception:
+        """Calculate overall language quality score."""
+        # Simple language quality score based on word count and diversity
+        words = word_tokenize(text.lower())
+        if not words:
             return 0.0
 
-    def _calculate_grammar_score(self, doc) -> float:
-        # Simplified grammar score (could be replaced with more detailed rules)
-        error_count = len([token for token in doc if token.dep_ == "ROOT"])
-        return max(0, 1 - (error_count / len(doc)))
+        # Calculate word diversity
+        unique_words = set(words)
+        diversity = len(unique_words) / len(words)
 
-    def _calculate_fluency_score(self, doc) -> float:
-        filler_count = len(
-            [
-                token
-                for token in doc
-                if token.text.lower() in self.speech_patterns["hesitation"]["single"]
-            ]
-        )
-        return max(0, 1 - (filler_count / len(doc)))
+        # Calculate average word length
+        avg_word_length = sum(len(w) for w in words) / len(words)
 
-    def _calculate_complexity_score(self, doc) -> float:
-        sent_lengths = [len(sent) for sent in doc.sents]
-        if not sent_lengths:
-            return 0.0
-        avg_length = sum(sent_lengths) / len(sent_lengths)
-        return min(1.0, avg_length / 20)
+        # Combine metrics
+        return (diversity * 0.5) + (min(1.0, avg_word_length / 8) * 0.5)
 
     def save_all_formats(self, result: TranscriptionResult, output_dir: Path) -> None:
+        """Save analysis results in multiple formats."""
         try:
+            # Save plain text with detailed analysis
             self._save_txt(result, output_dir / "transcription.txt")
+
+            # Save VTT with timing information
             self._save_vtt(result, output_dir / "transcription.vtt")
+
+            # Save TextGrid for Praat analysis
             self._save_textgrid(result, output_dir / "transcription.TextGrid")
+
+            # Save detailed JSON analysis
             self._save_analysis_json(result, output_dir / "analysis.json")
+
+            # Save summary report
             self._save_summary_report(result, output_dir / "summary_report.txt")
+
             logger.info(f"All analysis files saved to {output_dir}")
+
         except Exception as e:
             logger.error(f"Error saving analysis files: {e}")
             raise
@@ -503,140 +699,215 @@ class TranscriptionAnalyzer:
     def _save_analysis_json(
         self, result: TranscriptionResult, output_path: Path
     ) -> None:
-        analysis = {
-            "text": result.text,
-            "duration": result.segments[-1]["end"] if result.segments else 0,
-            "word_count": len(result.word_timings),
-            "fillers": {"count": len(result.fillers), "details": result.fillers},
-            "repetitions": {
-                "count": len(result.repetitions),
-                "details": result.repetitions,
-            },
-        }
-        with open(output_path, "w", encoding="utf-8") as f:
-            json.dump(analysis, f, indent=2)
+        """Save detailed analysis in JSON format."""
+        try:
+            analysis = {
+                "text": result.text,
+                "duration": result.segments[-1]["end"] if result.segments else 0,
+                "word_count": len(result.word_timings),
+                "fillers": {"count": len(result.fillers), "details": result.fillers},
+                "repetitions": {
+                    "count": len(result.repetitions),
+                    "details": result.repetitions,
+                },
+                "pronunciation_errors": {
+                    "count": len(result.pronunciation_errors),
+                    "details": result.pronunciation_errors,
+                },
+                "silences": {
+                    "count": len(result.silences),
+                    "details": result.silences,
+                },
+            }
+
+            with open(output_path, "w", encoding="utf-8") as f:
+                json.dump(analysis, f, indent=2)
+
+        except Exception as e:
+            logger.error(f"Error saving analysis JSON: {e}")
+            raise
 
     def _save_textgrid(self, result: TranscriptionResult, output_path: Path) -> None:
-        textgrid_content = 'File type = "ooTextFile"\nObject class = "TextGrid"\n\n'
-        textgrid_content += f"xmin = 0\nxmax = {result.duration}\n"
-        textgrid_content += "tiers? <exists>\nsize = 3\nitem []:\n"
-        textgrid_content += self._create_textgrid_tier("words", result.word_timings, 1)
-        textgrid_content += self._create_textgrid_tier("fillers", result.fillers, 2)
-        textgrid_content += self._create_textgrid_tier(
-            "repetitions", result.repetitions, 3
-        )
-        with open(output_path, "w", encoding="utf-8") as f:
-            f.write(textgrid_content)
+        """Save TextGrid format for Praat analysis."""
+        try:
+            # Create TextGrid
+            textgrid_content = 'File type = "ooTextFile"\nObject class = "TextGrid"\n\n'
+            textgrid_content += f"xmin = 0\nxmax = {result.duration}\n"
+            textgrid_content += "tiers? <exists>\nsize = 4\nitem []:\n"
 
-    def _create_textgrid_tier(self, name: str, items: list, tier_num: int) -> str:
+            # Words tier
+            textgrid_content += self._create_textgrid_tier(
+                "words", result.word_timings, 1
+            )
+
+            # Fillers tier
+            textgrid_content += self._create_textgrid_tier("fillers", result.fillers, 2)
+
+            # Repetitions tier
+            textgrid_content += self._create_textgrid_tier(
+                "repetitions", result.repetitions, 3
+            )
+
+            # Pronunciation errors tier
+            textgrid_content += self._create_textgrid_tier(
+                "pronunciation", result.pronunciation_errors, 4
+            )
+
+            # Write to file
+            with open(output_path, "w", encoding="utf-8") as f:
+                f.write(textgrid_content)
+
+        except Exception as e:
+            logger.error(f"Error saving TextGrid: {e}")
+            raise
+
+    def _create_textgrid_tier(self, name: str, items: List[Dict], tier_num: int) -> str:
+        """Create a tier for TextGrid."""
         content = f"    item [{tier_num}]:\n"
         content += f'        class = "IntervalTier"\n'
         content += f'        name = "{name}"\n'
-        content += "        xmin = 0\n"
+        content += f"        xmin = 0\n"
+
         if not items:
-            content += "        xmax = 0\n"
-            content += "        intervals: size = 0\n"
+            content += f"        xmax = 0\n"
+            content += f"        intervals: size = 0\n"
             return content
+
         xmax = max(item.get("end", 0) for item in items)
         content += f"        xmax = {xmax}\n"
         content += f"        intervals: size = {len(items)}\n"
+
         for i, item in enumerate(items, 1):
             content += f"        intervals [{i}]:\n"
             content += f"            xmin = {item.get('start', 0)}\n"
             content += f"            xmax = {item.get('end', 0)}\n"
+
             if "word" in item:
                 text = item["word"]
             elif "pattern" in item:
-                text = f"REP:{','.join(item['pattern'])}"
+                text = f"REP:{','.join(p['word'] for p in item['pattern'])}"
+            elif "reference" in item:
+                text = f"PRON:{item['word']}->{item['reference']}"
             else:
                 text = ""
+
             content += f'            text = "{text}"\n'
+
         return content
 
-    def _save_vtt(self, result: TranscriptionResult, output_path: Path) -> None:
-        with open(output_path, "w", encoding="utf-8") as f:
-            f.write("WEBVTT\n\n")
-            for i, segment in enumerate(result.segments):
-                start = self._format_timestamp(segment["start"])
-                end = self._format_timestamp(segment["end"])
-                f.write(f"{i+1}\n")
-                f.write(f"{start} --> {end}\n")
-                f.write(f"{segment['text']}\n\n")
-
     def _format_timestamp(self, seconds: float) -> str:
+        """Convert seconds to VTT timestamp format."""
         hours = int(seconds // 3600)
         minutes = int((seconds % 3600) // 60)
         seconds = seconds % 60
         return f"{hours:02d}:{minutes:02d}:{seconds:06.3f}"
 
+    def _save_vtt(self, result: TranscriptionResult, output_path: Path) -> None:
+        """Save WebVTT format with enhanced timing."""
+        try:
+            with open(output_path, "w", encoding="utf-8") as f:
+                f.write("WEBVTT\n\n")
+
+                for i, segment in enumerate(result.segments):
+                    start = self._format_timestamp(segment["start"])
+                    end = self._format_timestamp(segment["end"])
+                    f.write(f"{i+1}\n")
+                    f.write(f"{start} --> {end}\n")
+                    f.write(f"{segment['text']}\n\n")
+
+        except Exception as e:
+            logger.error(f"Error saving VTT: {e}")
+            raise
+
     def _save_txt(self, result: TranscriptionResult, output_path: Path) -> None:
-        with open(output_path, "w", encoding="utf-8") as f:
-            f.write("SPEECH ANALYSIS TRANSCRIPT\n")
-            f.write("=" * 50 + "\n\n")
-            f.write(f"Duration: {result.duration:.2f} seconds\n")
-            f.write(f"Speech Rate: {result.speech_rate:.1f} words per minute\n")
-            f.write(f"Language Score: {result.language_score:.2f}/1.0\n")
-            f.write(f"Overall Confidence: {result.confidence:.2f}\n\n")
-            f.write("FULL TRANSCRIPTION:\n")
-            f.write("-" * 20 + "\n")
-            f.write(result.text + "\n\n")
-            f.write("TIMESTAMPED SEGMENTS:\n")
-            f.write("-" * 20 + "\n")
-            for segment in result.segments:
-                start = self._format_timestamp(segment["start"])
-                end = self._format_timestamp(segment["end"])
-                f.write(f"[{start} --> {end}] {segment['text']}\n")
-            self._write_analysis_section(f, result)
+        """Save detailed text transcription."""
+        try:
+            with open(output_path, "w", encoding="utf-8") as f:
+                # Write header
+                f.write("SPEECH ANALYSIS TRANSCRIPT\n")
+                f.write("=" * 50 + "\n\n")
+
+                # Write metadata
+                f.write(f"Duration: {result.duration:.2f} seconds\n")
+                f.write(f"Speech Rate: {result.speech_rate:.1f} words per minute\n")
+                f.write(f"Language Score: {result.language_score:.2f}/1.0\n")
+                f.write(f"Overall Confidence: {result.confidence:.2f}\n\n")
+
+                # Write full text
+                f.write("FULL TRANSCRIPTION:\n")
+                f.write("-" * 20 + "\n")
+                f.write(result.text + "\n\n")
+
+                # Write segments with timestamps
+                f.write("TIMESTAMPED SEGMENTS:\n")
+                f.write("-" * 20 + "\n")
+                for segment in result.segments:
+                    start = self._format_timestamp(segment["start"])
+                    end = self._format_timestamp(segment["end"])
+                    f.write(f"[{start} --> {end}] {segment['text']}\n")
+
+                # Write analysis
+                self._write_analysis_section(f, result)
+
+        except Exception as e:
+            logger.error(f"Error saving TXT: {e}")
+            raise
 
     def _write_analysis_section(self, file, result: TranscriptionResult) -> None:
+        """Write detailed analysis section to text file."""
         file.write("\nDETAILED ANALYSIS:\n")
         file.write("-" * 20 + "\n\n")
+
+        # Write filler analysis
         file.write("Filler Words:\n")
         for filler in result.fillers:
             start = self._format_timestamp(filler["start"])
-            file.write(
-                f"- '{filler['word']}' at {start} ({filler.get('filler_type', '')})\n"
-            )
+            file.write(f"- '{filler['word']}' at {start} ({filler['filler_type']})\n")
+
         file.write("\nRepetitions:\n")
         for rep in result.repetitions:
             start = self._format_timestamp(rep["start"])
+            file.write(f"- '{rep['word']}' repeated {rep['count']} times at {start}\n")
+
+        file.write("\nPronunciation Errors:\n")
+        for error in result.pronunciation_errors:
+            start = self._format_timestamp(error["start"])
             file.write(
-                f"- '{rep['word']}' repeated {rep.get('count', 0)} times at {start}\n"
+                f"- '{error['word']}' should be '{error['reference']}' at {start}\n"
+            )
+
+        file.write("\nSilences:\n")
+        for silence in result.silences:
+            start = self._format_timestamp(silence["start"])
+            end = self._format_timestamp(silence["end"])
+            file.write(
+                f"- Silence for {silence['duration']:.2f}s from {start} to {end}\n"
             )
 
     def _save_summary_report(
         self, result: TranscriptionResult, output_path: Path
     ) -> None:
-        with open(output_path, "w", encoding="utf-8") as f:
-            f.write("SPEECH ANALYSIS SUMMARY\n")
-            f.write("=" * 30 + "\n\n")
-            f.write("Key Metrics:\n")
-            f.write(f"- Duration: {result.duration:.2f} seconds\n")
-            f.write(f"- Speech Rate: {result.speech_rate:.1f} words/minute\n")
-            f.write(f"- Language Score: {result.language_score:.2f}/1.0\n")
-            f.write(f"- Confidence: {result.confidence:.2f}/1.0\n\n")
-            f.write("Statistics:\n")
-            f.write(f"- Total Words: {len(result.word_timings)}\n")
-            f.write(f"- Filler Words: {len(result.fillers)}\n")
-            f.write(f"- Repetitions: {len(result.repetitions)}\n")
+        """Save concise summary report."""
+        try:
+            with open(output_path, "w", encoding="utf-8") as f:
+                f.write("SPEECH ANALYSIS SUMMARY\n")
+                f.write("=" * 30 + "\n\n")
 
-    # End of TranscriptionAnalyzer
+                # Key metrics
+                f.write("Key Metrics:\n")
+                f.write(f"- Duration: {result.duration:.2f} seconds\n")
+                f.write(f"- Speech Rate: {result.speech_rate:.1f} words/minute\n")
+                f.write(f"- Language Score: {result.language_score:.2f}/1.0\n")
+                f.write(f"- Confidence: {result.confidence:.2f}/1.0\n\n")
 
+                # Statistics
+                f.write("Statistics:\n")
+                f.write(f"- Total Words: {len(result.word_timings)}\n")
+                f.write(f"- Filler Words: {len(result.fillers)}\n")
+                f.write(f"- Repetitions: {len(result.repetitions)}\n")
+                f.write(f"- Pronunciation Errors: {len(result.pronunciation_errors)}\n")
+                f.write(f"- Silences: {len(result.silences)}\n")
 
-# Example usage
-if __name__ == "__main__":
-    try:
-        analyzer = TranscriptionAnalyzer(model_size="large")
-        # Dummy audio for testing (replace with actual audio)
-        audio_data = np.zeros(16000)
-        sample_rate = 16000
-        output_dir = Path("transcription_output")
-        output_dir.mkdir(parents=True, exist_ok=True)
-        result = analyzer.transcribe_with_enhanced_detection(audio_data, sample_rate)
-        discrepancies = analyzer.check_transcription_against_reference(result.text)
-        print("Discrepancies with reference passage:")
-        print(discrepancies)
-        analyzer.save_all_formats(result, output_dir)
-        print(f"Analysis complete. Results saved to {output_dir}")
-    except Exception as e:
-        logger.error(f"Error in transcription analysis: {e}")
+        except Exception as e:
+            logger.error(f"Error saving summary report: {e}")
+            raise
