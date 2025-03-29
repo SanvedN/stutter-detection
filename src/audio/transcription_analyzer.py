@@ -45,7 +45,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # Grandfather's passage for reference
-GRANDFATHERS_PASSAGE = """You wished to know all about my grandfather. Well, he is nearly ninety-three years old. He dresses himself in an ancient black frock coat, usually minus several buttons; yet he still thinks as swiftly as ever. A long, flowing beard clings to his chin, giving those who observe him a pronounced feeling of the utmost respect. When he speaks his voice is just a bit cracked and quivers a trifle. Twice each day he plays skillfully and with zest upon our small organ. Except in the winter when the ooze or snow or ice prevents, he slowly takes a short walk in the open air each day. We have often urged him to walk more and smoke less, but he always answers, "Banana Oil!" Grandfather likes to be modern in his language."""
+GRANDFATHERS_PASSAGE = """You wish to know about my grandfather. Well, he is nearly 93 years old, yet he still thinks as swiftly as ever. He dresses himself in an old black frock coat, usually several buttons missing. A long beard clings to his chin, giving those who observe him a pronounced feeling of the utmost respect. When he speaks, his voice is just a bit cracked and quivers a bit. Twice each day he plays skillfully and with zest upon a small organ. Except in the winter when the snow or ice prevents, he slowly takes a short walk in the open air each day. We have often urged him to walk more and smoke less, but he always answers, “Banana oil!”. Grandfather likes to be modern in his language."""
 
 
 @dataclass
@@ -311,7 +311,9 @@ class TranscriptionAnalyzer:
         i = 0
         while i < len(word_timings) - 1:
             current_word = word_timings[i]["word"].lower().strip(string.punctuation)
-            if not current_word:  # Skip empty words
+            if (
+                not current_word or len(current_word) < 2
+            ):  # Skip empty or very short words
                 i += 1
                 continue
 
@@ -327,6 +329,10 @@ class TranscriptionAnalyzer:
 
             while j < len(word_timings):
                 next_word = word_timings[j]["word"].lower().strip(string.punctuation)
+                if not next_word:
+                    j += 1
+                    continue
+
                 time_gap = word_timings[j]["start"] - word_timings[j - 1]["end"]
 
                 # Check if this is a repetition within the time threshold
@@ -377,17 +383,19 @@ class TranscriptionAnalyzer:
         if len(word1) >= 2 and len(word2) >= 2:
             # Check if they share the same beginning
             if word1.startswith(word2[:2]) or word2.startswith(word1[:2]):
-                return True
+                # Check if one is a partial form of the other (e.g., "st-" and "stutter")
+                if "-" in word1 or "-" in word2:
+                    return True
 
-        # Check for phonetic similarity
-        similarity = Levenshtein.ratio(word1, word2)
-        if similarity > 0.8:  # High similarity threshold
-            return True
+                # Check if they're very similar
+                similarity = Levenshtein.ratio(word1, word2)
+                if similarity > 0.8:
+                    return True
 
         return False
 
     def _detect_pronunciation_errors(self, word_timings: List[Dict]) -> List[Dict]:
-        """Detect pronunciation errors by comparing with reference text."""
+        """Detect pronunciation errors and prolongations."""
         errors = []
 
         # Extract words from transcription
@@ -397,13 +405,55 @@ class TranscriptionAnalyzer:
             if w["word"].strip() and not self._is_filler(w["word"])
         ]
 
-        # Compare with reference text using dynamic programming for alignment
+        # First pass: detect prolongations directly from word timings
+        for i, word_info in enumerate(word_timings):
+            word = word_info["word"].lower()
+
+            # Check for prolonged sounds (repeated characters)
+            if re.search(r"([a-z])\1{2,}", word):  # e.g., "sssshort" or "mmmmom"
+                errors.append(
+                    {
+                        "word": word,
+                        "start": word_info["start"],
+                        "end": word_info["end"],
+                        "event_type": "prolongation",
+                        "confidence": 0.9,
+                        "severity": 0.7,
+                    }
+                )
+                continue
+
+            # Check for hyphenated prolongations (e.g., "s-s-sam")
+            if "-" in word and len(word) >= 3:
+                parts = word.split("-")
+                if len(parts) >= 2 and len(set(parts[:-1])) == 1:
+                    errors.append(
+                        {
+                            "word": word,
+                            "start": word_info["start"],
+                            "end": word_info["end"],
+                            "event_type": "prolongation",
+                            "confidence": 0.9,
+                            "severity": 0.8,
+                        }
+                    )
+                    continue
+
+        # Second pass: compare with reference text
         alignment = self._align_texts(transcribed_words, self.reference_words)
 
         for i, (trans_idx, ref_idx) in enumerate(alignment):
             if trans_idx is not None and ref_idx is not None:
                 trans_word = transcribed_words[trans_idx]
                 ref_word = self.reference_words[ref_idx]
+
+                # Skip words already identified as prolongations
+                if any(
+                    e.get("word", "") == trans_word
+                    and e.get("event_type") == "prolongation"
+                    for e in errors
+                ):
+                    continue
 
                 # Check for pronunciation errors
                 if trans_word != ref_word:
@@ -428,25 +478,6 @@ class TranscriptionAnalyzer:
                                 / max(len(trans_word), len(ref_word)),
                             }
                         )
-
-                # Check for prolonged sounds in the transcribed word
-                if re.search(
-                    r"([a-z])\1{2,}", trans_word
-                ):  # Repeated letters like "sssshort"
-                    word_info = word_timings[
-                        self._find_word_timing_index(trans_word, word_timings)
-                    ]
-                    errors.append(
-                        {
-                            "word": trans_word,
-                            "reference": ref_word if ref_idx is not None else "",
-                            "start": word_info["start"],
-                            "end": word_info["end"],
-                            "event_type": "prolongation",
-                            "confidence": 0.9,
-                            "severity": 0.7,
-                        }
-                    )
 
         return errors
 
@@ -507,39 +538,92 @@ class TranscriptionAnalyzer:
     def _detect_silences(
         self, audio_data: np.ndarray, sample_rate: int, segments: List[Dict]
     ) -> List[Dict]:
-        """Detect long silences between words (not at start or end)."""
+        """
+        Detect silences with improved accuracy, distinguishing between natural pauses and blocks.
+
+        Args:
+            audio_data: Audio signal
+            sample_rate: Audio sample rate
+            segments: Transcription segments
+
+        Returns:
+            List of silence events with classification
+        """
         silences = []
 
-        # Parameters for silence detection
-        min_silence_duration = 0.5  # Minimum silence duration in seconds
-        threshold_db = -40  # Silence threshold in dB
+        try:
+            # Parameters for silence detection - refined thresholds
+            min_silence_duration = (
+                0.3  # Minimum silence duration in seconds to consider
+            )
+            natural_pause_threshold = 0.6  # Threshold for natural pauses (seconds)
+            block_threshold = 0.8  # Threshold for blocks (seconds)
+            threshold_db = -40  # Silence threshold in dB
 
-        # Convert to mono if needed
-        if len(audio_data.shape) > 1:
-            audio_data = np.mean(audio_data, axis=1)
+            # Convert to mono if needed
+            if len(audio_data.shape) > 1:
+                audio_data = np.mean(audio_data, axis=1)
 
-        # Get non-silent intervals
-        intervals = librosa.effects.split(
-            audio_data,
-            top_db=-threshold_db,
-            frame_length=int(0.025 * sample_rate),
-            hop_length=int(0.010 * sample_rate),
-        )
+            # Get non-silent intervals using librosa's split function
+            intervals = librosa.effects.split(
+                audio_data,
+                top_db=-threshold_db,
+                frame_length=int(0.025 * sample_rate),
+                hop_length=int(0.010 * sample_rate),
+            )
 
-        # Convert frame indices to seconds
-        intervals_sec = [
-            (start / sample_rate, end / sample_rate) for start, end in intervals
-        ]
+            # Convert frame indices to seconds
+            intervals_sec = [
+                (start / sample_rate, end / sample_rate) for start, end in intervals
+            ]
 
-        # Find silences between speech segments (not at start/end)
-        if len(intervals_sec) > 1:
-            for i in range(len(intervals_sec) - 1):
-                silence_start = intervals_sec[i][1]
-                silence_end = intervals_sec[i + 1][0]
-                silence_duration = silence_end - silence_start
+            # Get total audio duration
+            total_duration = len(audio_data) / sample_rate
 
-                # Only report significant silences
-                if silence_duration >= min_silence_duration:
+            # Find silences between speech segments
+            if len(intervals_sec) > 1:
+                for i in range(len(intervals_sec) - 1):
+                    silence_start = intervals_sec[i][1]
+                    silence_end = intervals_sec[i + 1][0]
+                    silence_duration = silence_end - silence_start
+
+                    # Skip very short silences
+                    if silence_duration < min_silence_duration:
+                        continue
+
+                    # Skip silences at the very beginning or end
+                    if silence_start < 0.3 or silence_end > total_duration - 0.3:
+                        continue
+
+                    # Analyze the silence
+                    is_block = False
+                    confidence = 0.5  # Default confidence
+
+                    # Check if this is likely a block (longer than block threshold)
+                    if silence_duration >= block_threshold:
+                        # For very long silences, almost certainly a block
+                        if silence_duration > 3:
+                            is_block = True
+                            confidence = 0.9
+                        else:
+                            # For borderline cases, analyze context
+                            is_block = self._analyze_silence_context(
+                                silence_start, silence_end, segments
+                            )
+                            confidence = min(
+                                0.9, 0.7 + (silence_duration - block_threshold) * 0.5
+                            )
+                    # Check if this might be a block (in the gray area)
+                    elif silence_duration >= natural_pause_threshold:
+                        # Look at surrounding context to determine if this is a block
+                        is_block = self._analyze_silence_context(
+                            silence_start, silence_end, segments
+                        )
+                        confidence = (
+                            0.5 + (silence_duration - natural_pause_threshold) * 0.5
+                        )
+
+                    # Add to results
                     silences.append(
                         {
                             "start": silence_start,
@@ -547,10 +631,138 @@ class TranscriptionAnalyzer:
                             "duration": silence_duration,
                             "event_type": "silence",
                             "position": "middle",
+                            "is_block": is_block,
+                            "confidence": confidence,
                         }
                     )
 
-        return silences
+            return silences
+
+        except Exception as e:
+            logger.error(f"Error in silence detection: {e}")
+            return []
+
+    def _analyze_silence_context(
+        self, silence_start: float, silence_end: float, segments: List[Dict]
+    ) -> bool:
+        """
+        Analyze the context around a silence to determine if it's likely a block.
+
+        Args:
+            silence_start: Start time of silence
+            silence_end: End time of silence
+            segments: Transcription segments
+
+        Returns:
+            True if likely a block, False if likely a natural pause
+        """
+        try:
+            # Find segments before and after the silence
+            segment_before = None
+            segment_after = None
+
+            for segment in segments:
+                if abs(segment["end"] - silence_start) < 0.2:
+                    segment_before = segment
+                if abs(segment["start"] - silence_end) < 0.2:
+                    segment_after = segment
+
+            # If we can't find surrounding segments, default to not a block
+            if not segment_before or not segment_after:
+                return False
+
+            # Check if the silence occurs in the middle of a sentence
+            # (This would be unusual and might indicate a block)
+            text_before = segment_before["text"].strip()
+            text_after = segment_after["text"].strip()
+
+            # Check if text before ends with sentence-ending punctuation
+            ends_sentence = bool(re.search(r"[.!?]$", text_before))
+
+            # Check if text after starts with a capital letter
+            starts_sentence = bool(re.search(r"^[A-Z]", text_after))
+
+            # If the silence doesn't align with sentence boundaries, it's more likely a block
+            if not ends_sentence and not starts_sentence:
+                return True
+
+            # Check for grammatical continuity across the silence
+            # If the text flows naturally across the silence, it's less likely to be a block
+            combined_text = text_before + " " + text_after
+            if self._is_grammatical_continuation(text_before, text_after):
+                return True
+
+            # Otherwise, it's probably a natural pause between sentences
+            return False
+
+        except Exception as e:
+            logger.error(f"Error analyzing silence context: {e}")
+            return False
+
+    def _is_grammatical_continuation(self, text_before: str, text_after: str) -> bool:
+        """
+        Check if text_after is a grammatical continuation of text_before.
+
+        Returns:
+            True if it appears to be a continuation, False otherwise
+        """
+        # Check if text_before ends with a word that typically continues
+        continuation_words = [
+            "the",
+            "a",
+            "an",
+            "and",
+            "or",
+            "but",
+            "if",
+            "when",
+            "while",
+            "because",
+            "since",
+            "as",
+            "that",
+            "which",
+            "who",
+            "whom",
+            "whose",
+        ]
+
+        # Get the last word of text_before
+        last_word = text_before.split()[-1].lower() if text_before.split() else ""
+
+        # If the last word suggests continuation, this might be a block
+        if last_word in continuation_words:
+            return True
+
+        # Check if text_after starts with a word that typically follows
+        following_words = [
+            "the",
+            "a",
+            "an",
+            "and",
+            "or",
+            "but",
+            "if",
+            "when",
+            "while",
+            "because",
+            "since",
+            "as",
+            "that",
+            "which",
+            "who",
+            "whom",
+            "whose",
+        ]
+
+        # Get the first word of text_after
+        first_word = text_after.split()[0].lower() if text_after.split() else ""
+
+        # If the first word suggests continuation, this might be a block
+        if first_word in following_words:
+            return True
+
+        return False
 
     def _post_process_segments(self, segments: List[Dict]) -> List[Dict]:
         """Enhanced post-processing of segments."""
@@ -715,7 +927,9 @@ class TranscriptionAnalyzer:
                     "details": result.pronunciation_errors,
                 },
                 "silences": {
-                    "count": len(result.silences),
+                    "count": len(
+                        [s for s in result.silences if s.get("is_block", False)]
+                    ),
                     "details": result.silences,
                 },
             }
@@ -869,20 +1083,28 @@ class TranscriptionAnalyzer:
             start = self._format_timestamp(rep["start"])
             file.write(f"- '{rep['word']}' repeated {rep['count']} times at {start}\n")
 
-        file.write("\nPronunciation Errors:\n")
+        file.write("\nPronunciation Errors and Prolongations:\n")
         for error in result.pronunciation_errors:
             start = self._format_timestamp(error["start"])
-            file.write(
-                f"- '{error['word']}' should be '{error['reference']}' at {start}\n"
-            )
+            if "prolongation" in error.get("event_type", ""):
+                file.write(f"- Prolongation: '{error['word']}' at {start}\n")
+            else:
+                file.write(
+                    f"- '{error['word']}' should be '{error.get('reference', '')}' at {start}\n"
+                )
 
-        file.write("\nSilences:\n")
+        file.write("\nSilences and Blocks:\n")
         for silence in result.silences:
             start = self._format_timestamp(silence["start"])
             end = self._format_timestamp(silence["end"])
-            file.write(
-                f"- Silence for {silence['duration']:.2f}s from {start} to {end}\n"
-            )
+            if silence.get("is_block", False):
+                file.write(
+                    f"- Block: {silence['duration']:.2f}s from {start} to {end}\n"
+                )
+            else:
+                file.write(
+                    f"- Silence: {silence['duration']:.2f}s from {start} to {end}\n"
+                )
 
     def _save_summary_report(
         self, result: TranscriptionResult, output_path: Path
@@ -905,8 +1127,18 @@ class TranscriptionAnalyzer:
                 f.write(f"- Total Words: {len(result.word_timings)}\n")
                 f.write(f"- Filler Words: {len(result.fillers)}\n")
                 f.write(f"- Repetitions: {len(result.repetitions)}\n")
-                f.write(f"- Pronunciation Errors: {len(result.pronunciation_errors)}\n")
-                f.write(f"- Silences: {len(result.silences)}\n")
+                f.write(
+                    f"- Prolongations: {len([e for e in result.pronunciation_errors if 'prolongation' in e.get('event_type', '')])}\n"
+                )
+                f.write(
+                    f"- Pronunciation Errors: {len([e for e in result.pronunciation_errors if 'prolongation' not in e.get('event_type', '')])}\n"
+                )
+                f.write(
+                    f"- Blocks: {len([s for s in result.silences if s.get('is_block', False)])}\n"
+                )
+                f.write(
+                    f"- Natural Pauses: {len([s for s in result.silences if not s.get('is_block', False)])}\n"
+                )
 
         except Exception as e:
             logger.error(f"Error saving summary report: {e}")

@@ -71,19 +71,36 @@ class SpeechVisualizer:
             Matplotlib figure with multiple subplots.
         """
         try:
-            fig, axes = plt.subplots(4, 1, figsize=(15, 14), constrained_layout=True)
+            if not events or len(events) < 2:
+                fig, axes = plt.subplots(
+                    3, 1, figsize=(15, 14), constrained_layout=True
+                )
 
-            # 1. Waveform with stutter markers
-            self._plot_waveform(axes[0], audio_data, sample_rate, events)
+                # 1. Waveform with stutter markers
+                self._plot_waveform(axes[0], audio_data, sample_rate, events)
 
-            # 2. Spectrogram
-            self._plot_spectrogram(axes[1], audio_data, sample_rate)
+                # 2. Spectrogram
+                self._plot_spectrogram(axes[1], audio_data, sample_rate)
 
-            # 3. Word timing and confidence plot
-            self._plot_word_timing(axes[2], features)
+                # 3. Word timing and confidence plot
+                self._plot_word_timing(axes[2], features)
 
-            # 4. Event distribution graph
-            self._plot_event_distribution(axes[3], events)
+            else:
+                fig, axes = plt.subplots(
+                    4, 1, figsize=(15, 14), constrained_layout=True
+                )
+
+                # 1. Waveform with stutter markers
+                self._plot_waveform(axes[0], audio_data, sample_rate, events)
+
+                # 2. Spectrogram
+                self._plot_spectrogram(axes[1], audio_data, sample_rate)
+
+                # 3. Word timing and confidence plot
+                self._plot_word_timing(axes[2], features)
+
+                # 4. Event distribution graph
+                self._plot_event_distribution(axes[3], events)
 
             return fig
 
@@ -160,9 +177,9 @@ class SpeechVisualizer:
     def _plot_event_distribution(self, ax: plt.Axes, events: List[Dict]) -> None:
         """Plot distribution of different stutter events."""
         if not events:
-            ax.text(0.5, 0.5, "No events detected", ha="center", va="center")
-            ax.set_xticks([])
-            ax.set_yticks([])
+            return
+
+        if len(events) < 2:
             return
 
         # Count occurrences of each event type
