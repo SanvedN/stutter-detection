@@ -89,6 +89,19 @@ def analyze_audio_thread(filepath, task_id, audio_bytes):
             shutil.rmtree("uploads")
 
 
+@app.route("/task_status/<task_id>", methods=["GET"])
+def task_status(task_id):
+    """Check current status of a task"""
+    task = tasks_collection.find_one(
+        {"task_id": task_id}, {"_id": 0, "status": 1, "error": 1}
+    )
+
+    if not task:
+        return jsonify({"error": "Task not found"}), 404
+
+    return jsonify({"status": task["status"], "error": task.get("error")})
+
+
 @app.route("/upload_audio", methods=["POST"])
 def upload_audio():
     if "file" not in request.files:
