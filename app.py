@@ -1,28 +1,30 @@
-from flask import Flask, request, jsonify, send_from_directory
+from flask import Flask, request, jsonify
 from flask_cors import CORS
-from werkzeug.utils import secure_filename
 import os
 import threading
 import ffmpeg
+import shutil
+import base64
+from werkzeug.utils import secure_filename
 from datetime import datetime
+from pymongo import MongoClient
+from bson.binary import Binary
 from analyzer import SpeechAnalyzer
 
 app = Flask(__name__)
 CORS(app)
 
-# Create necessary directories
-UPLOAD_FOLDER = "uploads/"
-RESULT_FOLDER = "results/"
-RESULTS = {}  # Store task statuses and results
-os.makedirs(UPLOAD_FOLDER, exist_ok=True)
-os.makedirs(RESULT_FOLDER, exist_ok=True)
+# MongoDB setup
+client = MongoClient(
+    "mongodb+srv://admin:admin@main.nt92qex.mongodb.net/stutter_db?retryWrites=true&w=majority&appName=main"
+)
+db = client.stutter_db
+tasks_collection = db["tasks"]
 
-# Initialize speech analyzer
 analyzer = SpeechAnalyzer()
 
 
 def extract_audio(mp4_filepath, wav_filepath):
-    """Extracts audio from an MP4 file and saves it as a WAV file."""
     try:
         ffmpeg.input(mp4_filepath).output(
             wav_filepath, format="wav", acodec="pcm_s16le", ar="16000"
@@ -33,108 +35,123 @@ def extract_audio(mp4_filepath, wav_filepath):
         return False
 
 
-def analyze_audio_thread(filepath, task_id, result_dir):
-    """Runs the audio analysis in a background thread."""
+def analyze_audio_thread(filepath, task_id, audio_bytes):
     try:
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        task_folder = os.path.join(result_dir, timestamp)
-        os.makedirs(task_folder, exist_ok=True)
+        # Store audio in MongoDB immediately
+        tasks_collection.update_one(
+            {"task_id": task_id}, {"$set": {"audio": Binary(audio_bytes)}}, upsert=True
+        )
 
-        RESULTS[task_id] = {"status": "processing", "folder": timestamp}
-
+        # Perform analysis
         result = analyzer.analyze_audio_file(filepath)
-        result["visualization_path"] = f"/get_visualization/{task_id}"
-        result["transcript_path"] = f"/get_transcript/{task_id}"
 
-        RESULTS[task_id] = {
+        # Read visualization image
+        with open(result["visualization_path"], "rb") as img_file:
+            img_base64 = base64.b64encode(img_file.read()).decode("utf-8")
+
+        # Prepare result for storage
+        result_data = {
+            "task_id": task_id,
             "status": "completed",
-            "result": result,
-            "folder": timestamp,
+            "timestamp": datetime.now(),
+            "result": {**result, "visualization": img_base64},
         }
+        del result_data["result"]["visualization_path"]
+
+        # Update MongoDB with results
+        tasks_collection.update_one(
+            {"task_id": task_id}, {"$set": result_data}, upsert=True
+        )
+
     except Exception as e:
-        RESULTS[task_id] = {"status": "failed", "error": str(e)}
-
-
-@app.route("/")
-def home():
-    return jsonify({"message": "Stutter Detection API is Running!"})
+        tasks_collection.update_one(
+            {"task_id": task_id},
+            {
+                "$set": {
+                    "status": "failed",
+                    "error": str(e),
+                    "timestamp": datetime.now(),
+                }
+            },
+            upsert=True,
+        )
+    finally:
+        # Cleanup files
+        if os.path.exists(filepath):
+            os.remove(filepath)
+        if filepath.endswith(".wav"):
+            mp4_path = filepath.replace(".wav", ".mp4")
+            if os.path.exists(mp4_path):
+                os.remove(mp4_path)
+        if os.path.exists("results"):
+            shutil.rmtree("results")
+        if os.path.exists("uploads"):
+            shutil.rmtree("uploads")
 
 
 @app.route("/upload_audio", methods=["POST"])
 def upload_audio():
-    """Handles file upload and starts processing in a separate thread."""
     if "file" not in request.files:
         return jsonify({"error": "No file uploaded"}), 400
 
     file = request.files["file"]
-    filename = secure_filename(file.filename)
-    filepath = os.path.join(UPLOAD_FOLDER, filename)
+    task_id = datetime.now().strftime("%Y%m%d_%H%M%S")
+
+    # Create uploads directory if needed
+    os.makedirs("uploads", exist_ok=True)
+    filepath = os.path.join("uploads", f"{task_id}_{secure_filename(file.filename)}")
     file.save(filepath)
+    file_bytes = open(filepath, "rb").read()
 
-    # Generate a task ID
-    task_id = filename.rsplit(".", 1)[0]
+    # Store initial task record (without filename)
+    tasks_collection.insert_one(
+        {"task_id": task_id, "status": "processing", "timestamp": datetime.now()}
+    )
 
-    # Extract audio if MP4
-    if filename.endswith(".mp4"):
-        wav_filepath = os.path.join(UPLOAD_FOLDER, task_id + ".wav")
+    # Handle MP4 files
+    if file.filename.endswith(".mp4"):
+        wav_filepath = filepath.replace(".mp4", ".wav")
         if not extract_audio(filepath, wav_filepath):
             return jsonify({"error": "Failed to extract audio"}), 500
         filepath = wav_filepath
+        file_bytes = open(filepath, "rb").read()
 
-    # Start processing in a separate thread
+    # Start processing thread with audio bytes
     thread = threading.Thread(
-        target=analyze_audio_thread, args=(filepath, task_id, RESULT_FOLDER)
+        target=analyze_audio_thread, args=(filepath, task_id, file_bytes)
     )
     thread.start()
 
-    return jsonify({"message": "Processing started!", "task_id": task_id})
+    return jsonify({"message": "Processing started", "task_id": task_id})
 
 
-@app.route("/task_status/<task_id>", methods=["GET"])
-def task_status(task_id):
-    """Check the status of an audio analysis task."""
-    if task_id in RESULTS:
-        return jsonify(RESULTS[task_id])
-    return jsonify({"status": "not found"}), 404
-
-
-@app.route("/get_visualization/<task_id>", methods=["GET"])
-def get_visualization(task_id):
-    """Serve visualization image file."""
-    if task_id in RESULTS:
-        task_folder = os.path.join(
-            RESULT_FOLDER, RESULTS[task_id]["folder"], "visualizations"
+@app.route("/tasks", methods=["GET"])
+def list_tasks():
+    """List all task IDs"""
+    try:
+        tasks = list(
+            tasks_collection.find(
+                {}, {"_id": 0, "task_id": 1, "status": 1, "timestamp": 1}
+            )
         )
-        if os.path.exists(task_folder):
-            files = os.listdir(task_folder)
-            if files:
-                return send_from_directory(task_folder, files[0])
-    return jsonify({"error": "Visualization not found"}), 404
+        return jsonify({"status": "success", "count": len(tasks), "tasks": tasks})
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)}), 500
 
 
-@app.route("/get_transcript/<task_id>", methods=["GET"])
-def get_transcript(task_id):
-    """Serve transcript text file."""
-    if task_id in RESULTS:
-        task_folder = os.path.join(
-            RESULT_FOLDER, RESULTS[task_id]["folder"], "transcripts"
-        )
-        if os.path.exists(task_folder):
-            files = os.listdir(task_folder)
-            if files:
-                return send_from_directory(task_folder, files[0])
-    return jsonify({"error": "Transcript not found"}), 404
+@app.route("/get_result/<task_id>", methods=["GET"])
+def get_result(task_id):
+    """Retrieve analysis results"""
+    task = tasks_collection.find_one({"task_id": task_id}, {"_id": 0})
 
+    if not task:
+        return jsonify({"error": "Task not found"}), 404
 
-@app.route("/get_passage_comparison/<task_id>", methods=["GET"])
-def get_passage_comparison(task_id):
-    """Get detailed passage comparison results."""
-    if task_id in RESULTS and RESULTS[task_id]["status"] == "completed":
-        result = RESULTS[task_id]["result"]
-        if "passage_comparison" in result:
-            return jsonify(result["passage_comparison"])
-    return jsonify({"error": "Comparison data not found"}), 404
+    if task["status"] != "completed":
+        return jsonify({"status": task["status"]}), 202
+
+    return jsonify(task["result"])
 
 
 if __name__ == "__main__":
-    app.run(debug=False)
+    app.run(host="0.0.0.0", port=5000)

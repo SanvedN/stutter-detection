@@ -153,7 +153,7 @@ class TranscriptionAnalyzer:
             result = self.transcribe_with_enhanced_detection(audio_data, sample_rate)
 
             # Save results in multiple formats
-            self.save_all_formats(result, output_dir)
+            # self.save_all_formats(result, output_dir)
 
             return result
 
