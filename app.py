@@ -10,14 +10,15 @@ from datetime import datetime
 from pymongo import MongoClient
 from bson.binary import Binary
 from analyzer import SpeechAnalyzer
+from dotenv import load_dotenv
 
+load_dotenv()
 app = Flask(__name__)
 CORS(app)
 
 # MongoDB setup
-client = MongoClient(
-    "mongodb+srv://admin:admin@main.nt92qex.mongodb.net/stutter_db?retryWrites=true&w=majority&appName=main"
-)
+client = MongoClient(os.getenv("MONGODB_URI"))
+print("Database Connected")
 db = client.stutter_db
 tasks_collection = db["tasks"]
 
